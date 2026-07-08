@@ -1,0 +1,44 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; img-src 'self' data: https: http:; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <title>Drift</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="viewport">
+    <div id="world">
+      <svg id="edges">
+        <g id="edgeG" fill="none" stroke-linecap="round"></g>
+      </svg>
+      <div id="cards"></div>
+    </div>
+
+    <div id="toolbar">
+      <div class="brand">◍ drift</div>
+      <button id="btnNew" title="New card (⌘T)">＋ New card</button>
+      <button id="btnFit" title="Fit everything (⌘0)">Fit</button>
+      <div class="tspacer"></div>
+      <div id="zoomPct">100%</div>
+    </div>
+
+    <div id="empty" class="hidden">
+      <div class="bigmark">◍</div>
+      <div>Press <kbd>⌘T</kbd> to open your first page</div>
+      <div class="sub">scroll to pan · pinch to zoom · double-click a card to focus</div>
+    </div>
+
+    <canvas id="minimap" width="360" height="240"></canvas>
+
+    <div id="palette" class="hidden">
+      <div id="palBox" class="no-pan">
+        <input id="palInput" placeholder="Search or enter address…" spellcheck="false" autocomplete="off">
+        <div class="palHint">↵ open here on the canvas · esc cancel</div>
+      </div>
+    </div>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

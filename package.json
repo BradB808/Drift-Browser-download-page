@@ -1,0 +1,14 @@
+{
+  "name": "drift-browser",
+  "productName": "Drift",
+  "version": "0.1.0",
+  "description": "A spatial web browser — no tabs, just an infinite canvas of connected pages.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "selftest": "electron . --selftest"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0"
+  }
+}
