@@ -211,6 +211,77 @@
   .mini h4 { font-size: 15px; margin-top: 8px; }
   .mini p { font-size: 13.5px; color: var(--gray); line-height: 1.6; margin-top: 5px; }
 
+  /* ---------- comparisons ---------- */
+  section.compare { padding: clamp(40px, 5vw, 64px) 0 0; }
+  .compare h2 {
+    font-family: "Fraunces", Georgia, serif;
+    font-weight: 700;
+    font-size: clamp(34px, 4.6vw, 58px);
+    margin-bottom: clamp(22px, 3vw, 36px);
+  }
+  .vs-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(255px, 1fr)); gap: 16px; }
+  .vs {
+    border-radius: 24px;
+    padding: 26px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    min-height: 320px;
+  }
+  .vs.g1 { background: linear-gradient(160deg, #ffe4cd 0%, #f3d9ff 55%, #dcd4ff 100%); }
+  .vs.g2 { background: linear-gradient(160deg, #e9dcff 0%, #ffd9e4 60%, #ffe6cf 100%); }
+  .vs.g3 { background: linear-gradient(160deg, #ffdcc4 0%, #ecdcff 55%, #d7dcff 100%); }
+  .vs.g4 { background: linear-gradient(160deg, #ded6ff 0%, #ffdff0 55%, #ffe8cf 100%); }
+  .vs .logos { display: flex; gap: 10px; }
+  .vs .logos .chip {
+    width: 52px;
+    height: 52px;
+    border-radius: 14px;
+    background: #fff;
+    box-shadow: 0 4px 14px rgba(27, 27, 31, 0.12);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .vs .logos .chip img { width: 32px; height: 32px; }
+  .vs .logos .chip.driftchip img { width: 42px; height: 42px; border-radius: 10px; }
+  .vs .logos .chip .globe { font-size: 28px; }
+  .vs h3 {
+    font-family: "Fraunces", Georgia, serif;
+    font-weight: 700;
+    font-size: clamp(24px, 2.6vw, 32px);
+    line-height: 1.08;
+  }
+  .vs p { font-size: 14.5px; line-height: 1.65; color: #3c3947; flex: 1; }
+  .vs a.try {
+    align-self: flex-start;
+    position: relative;
+    overflow: hidden;
+    display: inline-block;
+    background: linear-gradient(135deg,
+      rgba(44, 37, 52, 0.94) 0%,
+      rgba(23, 19, 29, 0.9) 45%,
+      rgba(40, 31, 46, 0.92) 100%);
+    color: #fff;
+    font-weight: 600;
+    font-size: 13.5px;
+    padding: 11px 22px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    box-shadow: 0 8px 20px rgba(27, 27, 31, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+    text-decoration: none;
+    transition: transform 0.12s ease, filter 0.15s ease;
+  }
+  .vs a.try::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: radial-gradient(130% 70% at 22% -20%, rgba(255, 255, 255, 0.35), transparent 55%);
+    pointer-events: none;
+  }
+  .vs a.try:hover { transform: translateY(-1px); filter: brightness(1.15); }
+
   /* ---------- download ---------- */
   section.download { padding: clamp(46px, 6vw, 80px) 0 clamp(60px, 7vw, 100px); }
   .download h2 {
@@ -331,6 +402,58 @@
         <h2 class="serif" style="font-size:clamp(28px,3.4vw,40px)">Built on Chromium.<br>Rethought from the canvas up.</h2>
         <p class="body">Every card is a real, sandboxed Chromium page, the same engine you
           already trust, arranged the way your head actually works.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="compare" id="compare">
+  <div class="wrap">
+    <h2 class="serif">How Drift compares</h2>
+    <div class="vs-grid">
+      <div class="vs g1">
+        <div class="logos">
+          <span class="chip driftchip"><img src="assets/icon.png" alt="Drift"></span>
+          <span class="chip"><img src="assets/chrome.svg" alt="Chrome"></span>
+        </div>
+        <h3>Drift vs Chrome</h3>
+        <p>Chrome squeezes your research into a row of identical little rectangles.
+          Drift lays it out as a map, so fifty pages stay fifty visible places you
+          can actually find again.</p>
+        <a class="try" href="#download">Try Drift instead</a>
+      </div>
+      <div class="vs g2">
+        <div class="logos">
+          <span class="chip driftchip"><img src="assets/icon.png" alt="Drift"></span>
+          <span class="chip"><img src="assets/firefox.svg" alt="Firefox"></span>
+        </div>
+        <h3>Drift vs Firefox</h3>
+        <p>Firefox fights for a private web, and we respect that. Drift keeps
+          everything on your machine too, then rethinks the surface: visible trails
+          and zones instead of hidden history lists.</p>
+        <a class="try" href="#download">Try Drift instead</a>
+      </div>
+      <div class="vs g3">
+        <div class="logos">
+          <span class="chip driftchip"><img src="assets/icon.png" alt="Drift"></span>
+          <span class="chip"><img src="assets/edge.svg" alt="Edge"></span>
+        </div>
+        <h3>Drift vs Edge</h3>
+        <p>Edge straps an assistant onto the same old tab strip. Drift changes the
+          strip itself: your session becomes a canvas you can zoom, arrange, and
+          think on.</p>
+        <a class="try" href="#download">Try Drift instead</a>
+      </div>
+      <div class="vs g4">
+        <div class="logos">
+          <span class="chip driftchip"><img src="assets/icon.png" alt="Drift"></span>
+          <span class="chip"><span class="globe">🌐</span></span>
+        </div>
+        <h3>Drift vs every other browser</h3>
+        <p>The address bar, the tab strip, the history list: unchanged since the
+          nineties. Drift is what browsing looks like when you start from a blank
+          canvas instead.</p>
+        <a class="try" href="#download">Try Drift instead</a>
       </div>
     </div>
   </div>
