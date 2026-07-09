@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Drift Browser Download | Drift</title>
-<meta name="description" content="Drift is a spatial web browser. No tabs. Your pages live as connected cards on an infinite canvas. Free for macOS and Windows.">
+<meta name="description" content="Drift is a spatial web browser. No tabs. Your pages live as connected cards on an infinite canvas. Free for macOS.">
 <meta property="og:title" content="Drift Browser Download">
-<meta property="og:description" content="No tabs. Pages are cards on an infinite canvas, connected by trails. Free for macOS and Windows.">
+<meta property="og:description" content="No tabs. Pages are cards on an infinite canvas, connected by trails. Free for macOS.">
 <meta property="og:image" content="https://driftwebbrowser.com/assets/promo.png">
 <meta property="og:url" content="https://driftwebbrowser.com/">
 <link rel="canonical" href="https://driftwebbrowser.com/">
@@ -280,9 +280,8 @@
       We think it's time for a different way to browse the web.</p>
     <div class="cta"><a class="btn-main" id="mainBtn" href="#download">Get Drift for macOS</a></div>
     <p class="avail" id="availLine">Drift is available on
-      <a href="https://github.com/BradB808/Drift-Browser-download-page/releases/latest/download/Drift-mac-arm64.dmg">macOS Apple Silicon</a>,
-      <a href="https://github.com/BradB808/Drift-Browser-download-page/releases/latest/download/Drift-mac-x64.dmg">macOS Intel</a> and
-      <a href="https://github.com/BradB808/Drift-Browser-download-page/releases/latest/download/Drift-Setup.exe">Windows</a>.<br>
+      <a href="https://github.com/BradB808/Drift-Browser-download-page/releases/latest/download/Drift-mac-arm64.dmg">macOS Apple Silicon</a> and
+      <a href="https://github.com/BradB808/Drift-Browser-download-page/releases/latest/download/Drift-mac-x64.dmg">macOS Intel</a>. Windows is coming soon.<br>
       <span class="note">Free, open source, and everything stays on your machine.</span></p>
   </div>
 </header>
@@ -351,17 +350,11 @@
         <div class="sub2">Intel-based Macs</div>
         <a class="get" href="https://github.com/BradB808/Drift-Browser-download-page/releases/latest/download/Drift-mac-x64.dmg">Download .dmg</a>
       </div>
-      <div class="dl">
-        <h3>Windows</h3>
-        <div class="sub2">Windows 10 / 11 · 64-bit</div>
-        <a class="get" href="https://github.com/BradB808/Drift-Browser-download-page/releases/latest/download/Drift-Setup.exe">Download installer</a>
-      </div>
     </div>
     <p class="fineprint">Drift is a free early preview, so Apple and Microsoft haven't verified it yet.
       On macOS, the first open shows a warning: choose <code>Done</code>, then go to
       <code>System Settings → Privacy &amp; Security</code> and click <code>Open Anyway</code>.
       (Terminal users can instead run <code>xattr -cr /Applications/Drift.app</code>.)
-      On Windows, if SmartScreen appears choose <code>More info → Run anyway</code>.
       Every install starts fresh with its own private canvas, bookmarks, and a one-time walkthrough.</p>
   </div>
 </section>
@@ -378,8 +371,7 @@
   const ua = navigator.userAgent;
   const mainBtn = document.getElementById("mainBtn");
   if (/Windows/i.test(ua)) {
-    mainBtn.href = REL + "Drift-Setup.exe";
-    mainBtn.textContent = "Get Drift for Windows";
+    mainBtn.textContent = "Get Drift (macOS, Windows soon)";
   } else if (/Mac/i.test(ua)) {
     mainBtn.href = REL + "Drift-mac-arm64.dmg";
     mainBtn.textContent = "Get Drift for macOS";
