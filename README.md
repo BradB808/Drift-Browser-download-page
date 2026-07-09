@@ -28,8 +28,9 @@ a real Chromium page — logins, video, web apps all work.
   Zones **auto-grow** around any card that outgrows them, and the color dot
   opens a full color wheel (hex supported).
 - **Bookmarks** — hit **☆** on any card (or right-click → bookmark). Browse
-  them from the `★` toolbar button, or in the `⌘T` palette: open it empty to
-  see them, or type to search bookmarks and open cards together.
+  them from the `★` toolbar button (with folders, plus HTML import/export that
+  works with Chrome, Brave, Firefox, and Safari), or in the `⌘T` palette: open
+  it empty to see them, or type to search bookmarks and open cards together.
 - **Canvas search** — `⌘F` (or just type in the `⌘T` palette): matching cards
   light up on the canvas and minimap; `↑↓ ↵` dives into one.
 - **Split focus** — pin two pages side-by-side: shift-double-click a card's
