@@ -579,6 +579,7 @@ function endZoneRename(z, commit) {
 }
 
 function startZoneDrag(z, e) {
+  if (e.button !== 0) return
   e.preventDefault()
   const sx = e.clientX, sy = e.clientY, x0 = z.x, y0 = z.y
   const renameTarget = !!e.target.closest('.zname')
@@ -613,6 +614,7 @@ function startZoneDrag(z, e) {
 }
 
 function startZoneResize(z, e) {
+  if (e.button !== 0) return
   e.preventDefault()
   e.stopPropagation()
   const sx = e.clientX, sy = e.clientY, w0 = z.w, h0 = z.h
@@ -646,7 +648,7 @@ function addEdge(from, to, quiet) {
 
 function removeEdgeEl(e) {
   const el = edgeEls.get(edgeKey(e))
-  if (el) { el.path.remove(); el.dot.remove(); edgeEls.delete(edgeKey(e)) }
+  if (el) { el.path.remove(); el.dot.remove(); el.hit.remove(); edgeEls.delete(edgeKey(e)) }
 }
 
 function removeEdge(from, to) {
@@ -673,6 +675,7 @@ function connectCards(a, b) {
 
 // Drag from a card's ○ port onto another card to draw a trail by hand.
 function startLinkDrag(c, e) {
+  if (e.button !== 0) return
   e.preventDefault()
   e.stopPropagation()
   const temp = document.createElementNS('http://www.w3.org/2000/svg', 'path')
@@ -716,24 +719,31 @@ function updateEdges() {
     if (!el) {
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
       const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
-      path.style.pointerEvents = 'stroke'
-      path.style.cursor = 'pointer'
-      path.addEventListener('dblclick', ev => {
+      // A trail is ~2px wide on screen — impossible to double-click. The hit
+      // path is an invisible fat twin that takes the pointer events.
+      const hit = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+      hit.setAttribute('class', 'edgehit')
+      hit.addEventListener('dblclick', ev => {
         ev.stopPropagation()
         removeEdge(e.from, e.to)
         toast('Trail removed')
       })
+      hit.addEventListener('mouseenter', () => { path.style.stroke = 'var(--accent)' })
+      hit.addEventListener('mouseleave', () => { path.style.stroke = '' })
       edgeG.appendChild(path)
       edgeG.appendChild(dot)
-      el = { path, dot }
+      edgeG.appendChild(hit)
+      el = { path, dot, hit }
       edgeEls.set(edgeKey(e), el)
     }
     const goRight = (b.x + b.w / 2) >= (a.x + a.w / 2)
     const p1 = { x: goRight ? a.x + a.w : a.x, y: a.y + a.h / 2 }
     const p2 = { x: goRight ? b.x : b.x + b.w, y: b.y + b.h / 2 }
     const dx = Math.max(60, Math.abs(p2.x - p1.x) / 2) * (goRight ? 1 : -1)
-    el.path.setAttribute('d',
-      `M ${p1.x} ${p1.y} C ${p1.x + dx} ${p1.y}, ${p2.x - dx} ${p2.y}, ${p2.x} ${p2.y}`)
+    const d = `M ${p1.x} ${p1.y} C ${p1.x + dx} ${p1.y}, ${p2.x - dx} ${p2.y}, ${p2.x} ${p2.y}`
+    el.path.setAttribute('d', d)
+    el.hit.setAttribute('d', d)
+    el.hit.setAttribute('stroke-width', String(16 / V.s))
     el.dot.setAttribute('cx', p2.x)
     el.dot.setAttribute('cy', p2.y)
     el.dot.setAttribute('r', 5 / V.s)
@@ -821,17 +831,25 @@ function openCanvasCtx(x, y) {
   renderCtxMenu(items, x, y)
 }
 
-function openCtx(c, x, y) {
+function openCtx(c, x, y, linkURL) {
   ctxOpenFor = c.id
   const comp = trailOf(c.id)
-  const prev = prevActiveId && prevActiveId !== c.id ? cards.get(prevActiveId) : null
-  const items = [
+  // Trail partner: the previously active card if it still exists, otherwise
+  // the most recently used other card — so connect/disconnect is always
+  // offered once a second card exists.
+  const prev = (prevActiveId && prevActiveId !== c.id && cards.get(prevActiveId)) ||
+    [...cards.values()].filter(x => x.id !== c.id).sort((a, b) => b.lastActive - a.lastActive)[0] || null
+  const items = []
+  if (linkURL) {
+    items.push({ label: 'Open link as connected card', fn: () => spawnChild(c, linkURL) })
+  }
+  items.push(
     { label: 'Copy address', fn: () => { copyText(c.url); toast('Address copied') } },
     {
       label: `Copy trail as Markdown (${comp.size} page${comp.size === 1 ? '' : 's'})`,
       fn: () => { copyText(trailMarkdown(c.id)); toast(`Copied trail · ${comp.size} page${comp.size === 1 ? '' : 's'}`) }
     }
-  ]
+  )
   items.push({
     label: bmSet.has(c.url) ? 'Remove bookmark' : 'Bookmark this page',
     fn: () => toggleBookmark(c)
@@ -840,8 +858,8 @@ function openCtx(c, x, y) {
     const t = (prev.title || hostOf(prev.url)).slice(0, 26)
     const between = edgeBetween(prev.id, c.id)
     items.push(between
-      ? { label: `Remove trail to “${t}”`, fn: () => { removeEdge(between.from, between.to); toast('Trail removed') } }
-      : { label: `Connect trail from “${t}”`, fn: () => connectCards(prev, c) })
+      ? { label: `Disconnect trail to “${t}”`, fn: () => { removeEdge(between.from, between.to); toast('Trail removed') } }
+      : { label: `Connect trail to “${t}”`, fn: () => connectCards(prev, c) })
     items.push({ label: `Split focus with “${t}”`, fn: () => focusPair(prev, c) })
   }
   const reopen = reopenCtxItem()
@@ -1006,6 +1024,15 @@ drift.onViewEvent(d => {
     case 'fail': c.error = d.desc; renderHead(c); break
     case 'spawn': spawnChild(c, d.url); break
     case 'focus': setActive(c.id); break
+    case 'ctx': {
+      // Right-click inside the live page: translate view-local coordinates to
+      // screen and open the card menu there.
+      let px, py
+      if (fullId === c.id) { px = d.x; py = TOOLBAR + d.y }
+      else { const r = screenBodyRect(c); px = r.x + d.x; py = r.y + d.y }
+      openCtx(c, px, py, d.linkURL)
+      break
+    }
   }
 })
 
@@ -1337,7 +1364,7 @@ function wireGlobalInput() {
 
   // Drag empty canvas to pan.
   viewport.addEventListener('mousedown', e => {
-    if (tourOpen) return
+    if (tourOpen || e.button !== 0) return
     if (e.target.closest('.card') || e.target.closest('#toolbar') ||
         e.target.closest('#minimap') || e.target.closest('#palette') ||
         e.target.closest('.zone') || e.target.closest('#ctx') ||
@@ -1483,10 +1510,12 @@ function suppressNextClick() {
 }
 
 function startCardDrag(c, e) {
+  if (e.button !== 0) return // right-click means menu, never drag or focus
   e.preventDefault()
   setActive(c.id)
   c.moveToken++ // cancel any in-flight animation fighting the drag
   if (splitInfo && splitInfo.movedId === c.id) splitInfo = null // user re-homed it
+  const wasTitle = !!e.target.closest('.ctitle') // title click = edit URL, not focus
   const sx = e.clientX, sy = e.clientY, x0 = c.x, y0 = c.y
   let moved = 0
   const move = ev => {
@@ -1501,6 +1530,9 @@ function startCardDrag(c, e) {
     window.removeEventListener('mousemove', move)
     window.removeEventListener('mouseup', up)
     if (moved >= 5) suppressNextClick()
+    // A clean click on the header (no drag) zooms into the card, so live
+    // pages focus with a single click, like clicking a tab.
+    else if (!wasTitle) focusCard(c)
     autoGrowZones()
     markDirty()
   }
@@ -1509,6 +1541,7 @@ function startCardDrag(c, e) {
 }
 
 function startCardResize(c, e) {
+  if (e.button !== 0) return
   e.preventDefault()
   e.stopPropagation()
   setActive(c.id)
@@ -2147,17 +2180,24 @@ async function runSelftest() {
 }
 
 // ---------- backdrop ----------
-// A fresh full-bleed photo every launch (Brave-style). Random seed per boot;
-// if the network is down, a layered aurora gradient takes its place.
+// A fresh full-bleed photo every launch, cycling through a curated set of
+// landscape and cityscape shots (stable picsum ids, hand-checked: no people).
+// If the network is down, a layered aurora gradient takes its place.
+
+const BACKDROPS = [10, 11, 13, 15, 16, 28, 29, 46, 49, 110, 122, 128, 164, 184, 218]
 
 function initBackdrop() {
   const img = document.getElementById('bgimg')
-  const seed = Math.random().toString(36).slice(2, 10)
+  let last = -1
+  try { last = parseInt(localStorage.getItem('drift-bg') || '-1', 10) } catch {}
+  let pick = Math.floor(Math.random() * BACKDROPS.length)
+  if (BACKDROPS.length > 1 && pick === last) pick = (pick + 1) % BACKDROPS.length
+  try { localStorage.setItem('drift-bg', String(pick)) } catch {}
   const w = Math.min(3840, Math.round(innerWidth * (devicePixelRatio || 1)))
   const h = Math.min(2160, Math.round(innerHeight * (devicePixelRatio || 1)))
   img.addEventListener('load', () => document.body.classList.add('bgready'))
   img.addEventListener('error', () => document.body.classList.add('nobg'))
-  img.src = `https://picsum.photos/seed/${seed}/${Math.max(w, 1600)}/${Math.max(h, 1000)}`
+  img.src = `https://picsum.photos/id/${BACKDROPS[pick]}/${Math.max(w, 1600)}/${Math.max(h, 1000)}`
 }
 
 // ---------- promo screenshot ----------

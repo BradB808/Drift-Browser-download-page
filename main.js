@@ -68,6 +68,12 @@ function wireView(id, view) {
     return { action: 'deny' }
   })
 
+  // Right-clicks inside the page open Drift's card menu (pages have no
+  // default context menu of their own in Electron).
+  wc.on('context-menu', (_e, params) => {
+    emit('ctx', { x: params.x, y: params.y, linkURL: safeUrl(params.linkURL || '') })
+  })
+
   // Escape must reach the canvas even while a page has keyboard focus
   // (menu accelerators can't claim plain Escape without breaking pages).
   wc.on('before-input-event', (_e, input) => {

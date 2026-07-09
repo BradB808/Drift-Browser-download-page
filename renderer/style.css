@@ -105,7 +105,13 @@ body.nobg #bgimg { display: none; }
 
 #edgeG { stroke: var(--accent-dim); }
 #edgeG circle { fill: var(--accent-dim); stroke: none; pointer-events: none; }
-#edgeG path:hover { stroke: var(--accent); }
+#edgeG path { pointer-events: none; }
+#edgeG .edgehit {
+  stroke: transparent;
+  fill: none;
+  pointer-events: stroke;
+  cursor: pointer;
+}
 #edgeG .linkdrag {
   stroke: var(--accent);
   stroke-dasharray: 6 5;
