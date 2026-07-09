@@ -20,6 +20,7 @@
     "toolsets": {
       "nsis": "1.2.1"
     },
+    "afterPack": "build/adhoc-sign.js",
     "files": [
       "main.js",
       "preload.js",
