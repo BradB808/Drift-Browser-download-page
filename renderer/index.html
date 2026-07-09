@@ -31,6 +31,7 @@
         <button id="btnTidy" title="Arrange cards by trail (⇧⌘T)">Tidy</button>
         <button id="btnFit" title="Fit everything (⌘0)">Fit</button>
         <button id="btnBookmarks" title="Bookmarks">★</button>
+        <button id="btnVault" title="Password vault">🔒</button>
       </div>
       <div class="tspacer"></div>
       <div class="tgroup hidden" id="updateG">
@@ -67,10 +68,12 @@
     </div>
 
     <div id="bmpanel" class="hidden no-pan">
-      <div class="bmhead">Bookmarks</div>
+      <div class="bmhead">Bookmarks<button id="btnBmFolder" title="New folder">+ Folder</button></div>
       <div id="bmlist"></div>
       <div class="bmfoot">click to open · × to remove · ☆ on any card to add</div>
     </div>
+
+    <div id="vaultpanel" class="hidden no-pan"></div>
 
     <div id="ctx" class="hidden no-pan"></div>
     <div id="toast"></div>
