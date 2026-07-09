@@ -50,17 +50,42 @@
   nav .links { margin-left: auto; display: flex; gap: 26px; align-items: center; }
   nav .links a { color: var(--ink); text-decoration: none; font-size: 14.5px; font-weight: 500; }
   nav .links a:hover { color: var(--orange); }
+  /* Liquid glass CTA, matching Drift's in-app toolbar */
   .pill {
+    position: relative;
+    overflow: hidden;
     display: inline-block;
-    background: linear-gradient(90deg, var(--orange), var(--orange2));
+    background: linear-gradient(135deg,
+      rgba(44, 37, 52, 0.94) 0%,
+      rgba(23, 19, 29, 0.9) 45%,
+      rgba(40, 31, 46, 0.92) 100%);
     color: #fff !important;
     font-weight: 600;
     padding: 11px 24px;
     border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    box-shadow: 0 10px 26px rgba(27, 27, 31, 0.28),
+      inset 0 1px 0 rgba(255, 255, 255, 0.35),
+      inset 0 -1px 1px rgba(255, 255, 255, 0.08);
     text-decoration: none;
-    transition: transform 0.12s ease, box-shadow 0.15s ease;
+    transition: transform 0.12s ease, box-shadow 0.15s ease, filter 0.15s ease;
   }
-  .pill:hover { transform: translateY(-1px); box-shadow: 0 10px 26px rgba(255, 80, 30, 0.35); color: #fff; }
+  .pill::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: radial-gradient(130% 70% at 22% -20%, rgba(255, 255, 255, 0.35), transparent 55%);
+    pointer-events: none;
+  }
+  .pill:hover {
+    transform: translateY(-1px);
+    filter: brightness(1.15);
+    box-shadow: 0 14px 34px rgba(27, 27, 31, 0.36),
+      inset 0 1px 0 rgba(255, 255, 255, 0.4),
+      inset 0 -1px 1px rgba(255, 255, 255, 0.08);
+    color: #fff;
+  }
 
   /* ---------- hero ---------- */
   .hero { position: relative; padding: clamp(48px, 7vw, 96px) 0 clamp(24px, 3vw, 40px); }
@@ -93,18 +118,40 @@
   }
   .hero .cta { margin-top: 38px; }
   .btn-main {
+    position: relative;
+    overflow: hidden;
     display: inline-block;
-    background: linear-gradient(90deg, var(--orange), var(--orange2));
+    background: linear-gradient(135deg,
+      rgba(44, 37, 52, 0.95) 0%,
+      rgba(23, 19, 29, 0.92) 45%,
+      rgba(40, 31, 46, 0.94) 100%);
     color: #fff;
     font-weight: 600;
     font-size: 18px;
     padding: 17px 36px;
     border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.25);
     text-decoration: none;
-    transition: transform 0.12s ease, box-shadow 0.15s ease;
-    box-shadow: 0 8px 26px rgba(255, 80, 30, 0.25);
+    transition: transform 0.12s ease, box-shadow 0.15s ease, filter 0.15s ease;
+    box-shadow: 0 14px 36px rgba(27, 27, 31, 0.3),
+      inset 0 1.5px 0 rgba(255, 255, 255, 0.38),
+      inset 0 -1px 1px rgba(255, 255, 255, 0.08);
   }
-  .btn-main:hover { transform: translateY(-2px); box-shadow: 0 16px 38px rgba(255, 80, 30, 0.4); }
+  .btn-main::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: radial-gradient(130% 70% at 22% -20%, rgba(255, 255, 255, 0.32), transparent 55%);
+    pointer-events: none;
+  }
+  .btn-main:hover {
+    transform: translateY(-2px);
+    filter: brightness(1.15);
+    box-shadow: 0 20px 46px rgba(27, 27, 31, 0.38),
+      inset 0 1.5px 0 rgba(255, 255, 255, 0.42),
+      inset 0 -1px 1px rgba(255, 255, 255, 0.08);
+  }
   .hero .avail { margin-top: 22px; font-size: 15px; font-weight: 600; color: var(--ink); line-height: 1.7; }
   .hero .avail a { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
   .hero .avail a:hover { color: var(--orange); }
