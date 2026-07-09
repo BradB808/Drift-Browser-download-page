@@ -223,7 +223,7 @@ ipcMain.handle('bookmarks:save', (_e, arr) => {
 // version exists, the renderer shows a pill linking to the download page.
 
 const UPDATE_REPO = 'BradB808/Drift-Browser-download-page'
-const DOWNLOAD_PAGE = 'https://driftbrowser.netlify.app/'
+const DOWNLOAD_PAGE = 'https://driftwebbrowser.com/'
 
 function isNewerVersion(a, b) { // a > b, "x.y.z"
   const pa = String(a).split('.').map(n => parseInt(n, 10) || 0)
