@@ -31,7 +31,9 @@
         <button id="btnTidy" title="Arrange cards by trail (⇧⌘T)">Tidy</button>
         <button id="btnFit" title="Fit everything (⌘0)">Fit</button>
         <button id="btnBookmarks" title="Bookmarks">★</button>
-        <button id="btnVault" title="Password vault">🔒</button>
+        <!-- Vault is built but hidden until it's hardened for real use.
+             Remove the `hidden` class (and see VAULT_ENABLED in app.js) to re-activate. -->
+        <button id="btnVault" class="hidden" title="Password vault">🔒</button>
       </div>
       <div class="tspacer"></div>
       <div class="tgroup hidden" id="updateG">
@@ -68,7 +70,13 @@
     </div>
 
     <div id="bmpanel" class="hidden no-pan">
-      <div class="bmhead">Bookmarks<button id="btnBmFolder" title="New folder">+ Folder</button></div>
+      <div class="bmhead"><span>Bookmarks</span>
+        <span class="bmhbtns">
+          <button id="btnBmImport" title="Import bookmarks from an HTML file">Import</button>
+          <button id="btnBmExport" title="Export bookmarks to an HTML file">Export</button>
+          <button id="btnBmFolder" title="New folder">+ Folder</button>
+        </span>
+      </div>
       <div id="bmlist"></div>
       <div class="bmfoot">click to open · × to remove · ☆ on any card to add</div>
     </div>

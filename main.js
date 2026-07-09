@@ -3,7 +3,7 @@
 // per canvas card. The renderer is the canvas UI; it tells us where each live
 // page should sit on screen and at what zoom, and we position the native views.
 
-const { app, BrowserWindow, WebContentsView, ipcMain, Menu, shell } = require('electron')
+const { app, BrowserWindow, WebContentsView, ipcMain, Menu, shell, dialog } = require('electron')
 const path = require('path')
 const fs = require('fs')
 
@@ -220,6 +220,30 @@ ipcMain.handle('bookmarks:save', (_e, data) => {
   if (SELFTEST || PROMO) return
   if (data == null || typeof data !== 'object') return
   try { fs.writeFileSync(bookmarksFile(), JSON.stringify(data)) } catch {}
+})
+
+// Export/import bookmarks as a standard Netscape HTML file (the format every
+// browser reads and writes). The renderer builds/parses the HTML; main only
+// runs the save/open dialog and touches the file.
+ipcMain.handle('bookmarks:export', async (_e, html) => {
+  if (typeof html !== 'string') return { ok: false }
+  const { canceled, filePath } = await dialog.showSaveDialog(win, {
+    title: 'Export bookmarks',
+    defaultPath: 'drift-bookmarks.html',
+    filters: [{ name: 'HTML', extensions: ['html'] }]
+  })
+  if (canceled || !filePath) return { ok: false }
+  try { fs.writeFileSync(filePath, html); return { ok: true } } catch { return { ok: false } }
+})
+
+ipcMain.handle('bookmarks:import', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+    title: 'Import bookmarks',
+    properties: ['openFile'],
+    filters: [{ name: 'Bookmark HTML', extensions: ['html', 'htm'] }]
+  })
+  if (canceled || !filePaths || !filePaths[0]) return null
+  try { return fs.readFileSync(filePaths[0], 'utf8') } catch { return null }
 })
 
 // ---------- password vault ----------

@@ -1439,7 +1439,12 @@ function wireGlobalInput() {
   $('#btnFit').addEventListener('click', fitAll)
   $('#btnBookmarks').addEventListener('click', () => { bmOpen ? closeBmPanel() : openBmPanel() })
   $('#btnBmFolder').addEventListener('click', addFolder)
-  $('#btnVault').addEventListener('click', () => { vaultOpen ? closeVaultPanel() : openVaultPanel() })
+  $('#btnBmImport').addEventListener('click', importBookmarks)
+  $('#btnBmExport').addEventListener('click', exportBookmarks)
+  if (VAULT_ENABLED) {
+    $('#btnVault').classList.remove('hidden')
+    $('#btnVault').addEventListener('click', () => { vaultOpen ? closeVaultPanel() : openVaultPanel() })
+  }
   $('#btnFullExit').addEventListener('click', exitFullscreen)
   $('#btnUpdate').addEventListener('click', () => drift.openDownloadPage())
   $('#btnUpdateDismiss').addEventListener('click', () => $('#updateG').classList.add('hidden'))
@@ -1636,6 +1641,87 @@ function removeFolder(name) {
   renderBmPanel()
 }
 
+// ---------- bookmark import / export (Netscape HTML) ----------
+
+function bookmarksToHTML() {
+  const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+  const link = (b, indent) => `${indent}<DT><A HREF="${esc(b.url)}"${b.t ? ` ADD_DATE="${Math.floor(b.t / 1000)}"` : ''}>${esc(b.title || b.url)}</A>\n`
+  let s = '<!DOCTYPE NETSCAPE-Bookmark-file-1>\n' +
+    '<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">\n' +
+    '<TITLE>Bookmarks</TITLE>\n<H1>Bookmarks</H1>\n<DL><p>\n'
+  for (const f of bmFolders) {
+    s += `    <DT><H3>${esc(f)}</H3>\n    <DL><p>\n`
+    for (const b of bookmarks.filter(b => b.folder === f)) s += link(b, '        ')
+    s += '    </DL><p>\n'
+  }
+  for (const b of bookmarks.filter(b => !b.folder || !bmFolders.includes(b.folder))) s += link(b, '    ')
+  s += '</DL><p>\n'
+  return s
+}
+
+// Parse a browser bookmark HTML file. Drift folders are one level deep, so
+// nested subfolders are flattened to their own folders (names kept).
+function parseBookmarksHTML(html) {
+  const doc = new DOMParser().parseFromString(html, 'text/html')
+  const items = []
+  const folders = new Set()
+  const topDL = doc.querySelector('dl')
+  if (!topDL) {
+    for (const a of doc.querySelectorAll('a[href]')) {
+      const href = a.getAttribute('href')
+      if (/^https?:/i.test(href)) items.push({ title: a.textContent.trim() || href, url: href, folder: null })
+    }
+    return { items, folders: [] }
+  }
+  const walk = (dl, folder) => {
+    let node = dl.firstElementChild
+    while (node) {
+      if (node.tagName === 'DT') {
+        const h3 = node.querySelector(':scope > h3')
+        const a = node.querySelector(':scope > a')
+        if (h3) {
+          const name = h3.textContent.trim() || folder
+          if (name) folders.add(name)
+          const sub = node.querySelector(':scope > dl') ||
+            (node.nextElementSibling && node.nextElementSibling.tagName === 'DL' ? node.nextElementSibling : null)
+          if (sub) walk(sub, name || folder)
+        } else if (a) {
+          const href = a.getAttribute('href')
+          if (href && /^https?:/i.test(href)) items.push({ title: a.textContent.trim() || href, url: href, folder: folder || null })
+        }
+      }
+      node = node.nextElementSibling
+    }
+  }
+  walk(topDL, null)
+  return { items, folders: [...folders] }
+}
+
+async function exportBookmarks() {
+  if (!bookmarks.length) { toast('No bookmarks to export yet'); return }
+  const res = await drift.bookmarksExport(bookmarksToHTML())
+  if (res && res.ok) toast(`Exported ${bookmarks.length} bookmark${bookmarks.length === 1 ? '' : 's'}`)
+}
+
+async function importBookmarks() {
+  const html = await drift.bookmarksImport()
+  if (!html) return
+  const { items, folders } = parseBookmarksHTML(html)
+  for (const f of folders) if (f && !bmFolders.includes(f)) bmFolders.push(f)
+  let added = 0
+  for (const it of items) {
+    if (bmSet.has(it.url)) continue // don't duplicate what you already have
+    bookmarks.push({ url: it.url, title: it.title || hostOf(it.url), fav: null, t: Date.now(), folder: it.folder || null })
+    bmSet.add(it.url)
+    added++
+  }
+  if (bookmarks.length > 500) bookmarks.length = 500
+  saveBookmarks()
+  refreshBookmarkUI()
+  if (bmOpen) renderBmPanel()
+  toast(added ? `Imported ${added} new bookmark${added === 1 ? '' : 's'}` : 'Nothing new to import')
+}
+
 // ---------- bookmarks panel (toolbar ★) ----------
 
 const bmPanel = $('#bmpanel')
@@ -1763,6 +1849,9 @@ function closeBmPanel() {
 // lives only in memory for the session and is cleared on lock. Each entry is
 // bound to a site origin, so autofill is only offered on the matching site.
 
+// The vault is fully built and tested but stays hidden until it's hardened for
+// real-world use. Flip this to true (the toolbar button unhides) to re-enable.
+const VAULT_ENABLED = false
 const VAULT_ITER = 310000
 let vaultBlob = null        // { v, salt, iter, iv, ct } persisted, or null if not set up
 let vaultKey = null         // CryptoKey while unlocked, else null
@@ -2516,6 +2605,23 @@ async function runSelftest() {
     bmFolders = ['Research']
     moveBookmark(bmCard.url, 'Research')
     if (bookmarks.find(b => b.url === bmCard.url)?.folder !== 'Research') report.errors.push('bookmark not moved into folder')
+
+    // export → parse round trip (own format)
+    const roundtrip = parseBookmarksHTML(bookmarksToHTML())
+    if (!roundtrip.items.find(x => x.url === bmCard.url)) report.errors.push('export/import round trip lost a bookmark')
+    if (!roundtrip.folders.includes('Research')) report.errors.push('export/import round trip lost a folder')
+
+    // parse a Brave/Chrome-style nested export
+    const braveHTML = '<!DOCTYPE NETSCAPE-Bookmark-file-1>\n<DL><p>\n' +
+      '<DT><H3>Bookmarks bar</H3>\n<DL><p>\n' +
+      '<DT><A HREF="https://news.ycombinator.com/">Hacker News</A>\n' +
+      '<DT><H3>Reading</H3>\n<DL><p>\n<DT><A HREF="https://example.org/">Example</A>\n</DL><p>\n' +
+      '</DL><p>\n</DL><p>\n'
+    const braveParsed = parseBookmarksHTML(braveHTML)
+    report.import = { items: braveParsed.items.length, folders: braveParsed.folders.length }
+    if (braveParsed.items.length !== 2) report.errors.push('Brave-style import parsed wrong item count: ' + braveParsed.items.length)
+    if (!braveParsed.folders.includes('Reading')) report.errors.push('Brave-style import lost a nested folder')
+
     removeFolder('Research')
     if (bookmarks.find(b => b.url === bmCard.url)?.folder) report.errors.push('folder removal did not unsort bookmark')
 

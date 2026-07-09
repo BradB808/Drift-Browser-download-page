@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld('drift', {
   loadState: () => ipcRenderer.invoke('state:load'),
   bookmarksLoad: () => ipcRenderer.invoke('bookmarks:load'),
   bookmarksSave: (data) => ipcRenderer.invoke('bookmarks:save', data),
+  bookmarksExport: (html) => ipcRenderer.invoke('bookmarks:export', html),
+  bookmarksImport: () => ipcRenderer.invoke('bookmarks:import'),
   vaultLoad: () => ipcRenderer.invoke('vault:load'),
   vaultSave: (blob) => ipcRenderer.invoke('vault:save', blob),
   vaultFill: (id, username, password) => ipcRenderer.invoke('vault:fill', { id, username, password }),

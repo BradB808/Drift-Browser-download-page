@@ -701,8 +701,8 @@ body.nobg #bgimg { display: none; }
   text-transform: uppercase;
   padding: 4px 10px 8px;
 }
-#btnBmFolder {
-  margin-left: auto;
+#bmpanel .bmhbtns { margin-left: auto; display: flex; gap: 5px; }
+#bmpanel .bmhbtns button {
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.05);
   color: var(--text);
@@ -713,7 +713,7 @@ body.nobg #bgimg { display: none; }
   text-transform: none;
   cursor: pointer;
 }
-#btnBmFolder:hover { border-color: var(--accent-dim); }
+#bmpanel .bmhbtns button:hover { border-color: var(--accent-dim); }
 
 #bmlist .bmnewfolder {
   width: calc(100% - 12px);
