@@ -715,6 +715,30 @@ body.nobg #bgimg { display: none; }
 }
 #bmpanel .bmhbtns button:hover { border-color: var(--accent-dim); }
 
+#btnBmClear:hover { border-color: var(--danger) !important; color: var(--danger); }
+
+#bmlist .bmconfirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 107, 107, 0.5);
+  border-radius: 10px;
+  background: rgba(255, 107, 107, 0.08);
+  font-size: 12.5px;
+}
+#bmlist .bmconfirm span { flex: 1; }
+#bmlist .bmconfirm button {
+  border: 0;
+  border-radius: 7px;
+  padding: 5px 11px;
+  font-size: 12px;
+  cursor: pointer;
+}
+#bmlist .bmcyes { background: var(--danger); color: #2a0d0d; font-weight: 650; }
+#bmlist .bmcno { background: rgba(255, 255, 255, 0.08); color: var(--text); }
+
 #bmlist .bmnewfolder {
   width: calc(100% - 12px);
   margin: 6px;

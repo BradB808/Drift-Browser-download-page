@@ -1441,6 +1441,7 @@ function wireGlobalInput() {
   $('#btnBmFolder').addEventListener('click', addFolder)
   $('#btnBmImport').addEventListener('click', importBookmarks)
   $('#btnBmExport').addEventListener('click', exportBookmarks)
+  $('#btnBmClear').addEventListener('click', clearAllBookmarks)
   if (VAULT_ENABLED) {
     $('#btnVault').classList.remove('hidden')
     $('#btnVault').addEventListener('click', () => { vaultOpen ? closeVaultPanel() : openVaultPanel() })
@@ -1643,57 +1644,98 @@ function removeFolder(name) {
 
 // ---------- bookmark import / export (Netscape HTML) ----------
 
+// Folder paths use " / " to keep nesting in Drift's flat folder model, e.g.
+// "News / Tech". The top-level container roots browsers wrap everything in
+// aren't real user folders, so their names are dropped.
+const BM_SEP = ' / '
+const BM_CONTAINERS = new Set([
+  'bookmarks bar', 'bookmarks toolbar', 'other bookmarks', 'bookmarks menu',
+  'mobile bookmarks', 'favorites bar', 'favorites', 'bookmarks'
+])
+
 function bookmarksToHTML() {
   const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-  const link = (b, indent) => `${indent}<DT><A HREF="${esc(b.url)}"${b.t ? ` ADD_DATE="${Math.floor(b.t / 1000)}"` : ''}>${esc(b.title || b.url)}</A>\n`
-  let s = '<!DOCTYPE NETSCAPE-Bookmark-file-1>\n' +
-    '<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">\n' +
-    '<TITLE>Bookmarks</TITLE>\n<H1>Bookmarks</H1>\n<DL><p>\n'
-  for (const f of bmFolders) {
-    s += `    <DT><H3>${esc(f)}</H3>\n    <DL><p>\n`
-    for (const b of bookmarks.filter(b => b.folder === f)) s += link(b, '        ')
-    s += '    </DL><p>\n'
+  // Rebuild the folder tree from the " / " path strings so the export nests
+  // properly and any other browser can re-import the structure.
+  const root = { kids: new Map(), items: [] }
+  const ensure = pathStr => {
+    let node = root
+    if (pathStr) for (const seg of pathStr.split(BM_SEP)) {
+      if (!node.kids.has(seg)) node.kids.set(seg, { kids: new Map(), items: [] })
+      node = node.kids.get(seg)
+    }
+    return node
   }
-  for (const b of bookmarks.filter(b => !b.folder || !bmFolders.includes(b.folder))) s += link(b, '    ')
-  s += '</DL><p>\n'
-  return s
+  for (const f of bmFolders) ensure(f) // keep empty folders
+  for (const b of bookmarks) ensure(bmFolders.includes(b.folder) ? b.folder : '').items.push(b)
+
+  const link = (b, ind) => `${ind}<DT><A HREF="${esc(b.url)}"` +
+    (b.t ? ` ADD_DATE="${Math.floor(b.t / 1000)}"` : '') +
+    (b.fav ? ` ICON="${esc(b.fav)}"` : '') +
+    `>${esc(b.title || b.url)}</A>\n`
+  const ser = (node, ind) => {
+    let out = ''
+    for (const [name, kid] of node.kids) {
+      out += `${ind}<DT><H3>${esc(name)}</H3>\n${ind}<DL><p>\n${ser(kid, ind + '    ')}${ind}</DL><p>\n`
+    }
+    for (const b of node.items) out += link(b, ind)
+    return out
+  }
+  return '<!DOCTYPE NETSCAPE-Bookmark-file-1>\n' +
+    '<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">\n' +
+    '<TITLE>Bookmarks</TITLE>\n<H1>Bookmarks</H1>\n<DL><p>\n' + ser(root, '    ') + '</DL><p>\n'
 }
 
-// Parse a browser bookmark HTML file. Drift folders are one level deep, so
-// nested subfolders are flattened to their own folders (names kept).
+// Parse a browser bookmark HTML file, keeping nested folder paths and the
+// embedded favicon (ICON="data:...") that Chromium browsers write per link.
 function parseBookmarksHTML(html) {
   const doc = new DOMParser().parseFromString(html, 'text/html')
   const items = []
   const folders = new Set()
+  const iconOf = a => {
+    const ic = a.getAttribute('icon') || ''
+    return (/^data:image\//i.test(ic) && ic.length <= 4096) ? ic : null
+  }
+  const addLink = (a, path) => {
+    const href = a.getAttribute('href')
+    if (!href || !/^https?:/i.test(href)) return
+    const ad = parseInt(a.getAttribute('add_date') || '', 10)
+    items.push({
+      title: a.textContent.trim() || href,
+      url: href,
+      folder: path.length ? path.join(BM_SEP) : null,
+      fav: iconOf(a),
+      t: Number.isFinite(ad) && ad > 0 ? ad * 1000 : Date.now()
+    })
+  }
   const topDL = doc.querySelector('dl')
   if (!topDL) {
-    for (const a of doc.querySelectorAll('a[href]')) {
-      const href = a.getAttribute('href')
-      if (/^https?:/i.test(href)) items.push({ title: a.textContent.trim() || href, url: href, folder: null })
-    }
+    for (const a of doc.querySelectorAll('a[href]')) addLink(a, [])
     return { items, folders: [] }
   }
-  const walk = (dl, folder) => {
+  const walk = (dl, path, depth) => {
     let node = dl.firstElementChild
     while (node) {
       if (node.tagName === 'DT') {
         const h3 = node.querySelector(':scope > h3')
         const a = node.querySelector(':scope > a')
         if (h3) {
-          const name = h3.textContent.trim() || folder
-          if (name) folders.add(name)
+          const name = h3.textContent.trim()
+          // Drop the browser's root container names; keep real user folders.
+          const isContainer = depth === 0 && BM_CONTAINERS.has(name.toLowerCase())
+          const childPath = (isContainer || !name) ? path : [...path, name]
+          if (childPath.length) folders.add(childPath.join(BM_SEP))
           const sub = node.querySelector(':scope > dl') ||
             (node.nextElementSibling && node.nextElementSibling.tagName === 'DL' ? node.nextElementSibling : null)
-          if (sub) walk(sub, name || folder)
+          if (sub) walk(sub, childPath, depth + 1)
         } else if (a) {
-          const href = a.getAttribute('href')
-          if (href && /^https?:/i.test(href)) items.push({ title: a.textContent.trim() || href, url: href, folder: folder || null })
+          addLink(a, path)
         }
       }
       node = node.nextElementSibling
     }
   }
-  walk(topDL, null)
+  walk(topDL, [], 0)
   return { items, folders: [...folders] }
 }
 
@@ -1711,7 +1753,13 @@ async function importBookmarks() {
   let added = 0
   for (const it of items) {
     if (bmSet.has(it.url)) continue // don't duplicate what you already have
-    bookmarks.push({ url: it.url, title: it.title || hostOf(it.url), fav: null, t: Date.now(), folder: it.folder || null })
+    bookmarks.push({
+      url: it.url,
+      title: it.title || hostOf(it.url),
+      fav: it.fav || null,          // embedded favicon from the export
+      t: it.t || Date.now(),
+      folder: it.folder || null     // nested path like "News / Tech"
+    })
     bmSet.add(it.url)
     added++
   }
@@ -1719,7 +1767,35 @@ async function importBookmarks() {
   saveBookmarks()
   refreshBookmarkUI()
   if (bmOpen) renderBmPanel()
-  toast(added ? `Imported ${added} new bookmark${added === 1 ? '' : 's'}` : 'Nothing new to import')
+  toast(added ? `Imported ${added} bookmark${added === 1 ? '' : 's'} · ${bmFolders.length} folder${bmFolders.length === 1 ? '' : 's'}` : 'Nothing new to import')
+}
+
+function clearAllBookmarks() {
+  if (!bookmarks.length && !bmFolders.length) { toast('No bookmarks to clear'); return }
+  // Inline confirm at the top of the list (Electron has no window.confirm here).
+  const existing = bmList.querySelector('.bmconfirm')
+  if (existing) { existing.remove(); return }
+  const bar = document.createElement('div')
+  bar.className = 'bmconfirm'
+  const txt = document.createElement('span')
+  txt.textContent = `Remove all ${bookmarks.length} bookmark${bookmarks.length === 1 ? '' : 's'}?`
+  const yes = document.createElement('button')
+  yes.className = 'bmcyes'
+  yes.textContent = 'Remove all'
+  yes.addEventListener('click', () => {
+    bookmarks = []
+    bmFolders = []
+    saveBookmarks()
+    refreshBookmarkUI()
+    renderBmPanel()
+    toast('All bookmarks removed')
+  })
+  const no = document.createElement('button')
+  no.className = 'bmcno'
+  no.textContent = 'Cancel'
+  no.addEventListener('click', () => renderBmPanel())
+  bar.append(txt, yes, no)
+  bmList.insertBefore(bar, bmList.firstChild)
 }
 
 // ---------- bookmarks panel (toolbar ★) ----------
@@ -2611,16 +2687,22 @@ async function runSelftest() {
     if (!roundtrip.items.find(x => x.url === bmCard.url)) report.errors.push('export/import round trip lost a bookmark')
     if (!roundtrip.folders.includes('Research')) report.errors.push('export/import round trip lost a folder')
 
-    // parse a Brave/Chrome-style nested export
+    // parse a Brave/Chrome-style nested export with a container root + favicon
     const braveHTML = '<!DOCTYPE NETSCAPE-Bookmark-file-1>\n<DL><p>\n' +
-      '<DT><H3>Bookmarks bar</H3>\n<DL><p>\n' +
-      '<DT><A HREF="https://news.ycombinator.com/">Hacker News</A>\n' +
-      '<DT><H3>Reading</H3>\n<DL><p>\n<DT><A HREF="https://example.org/">Example</A>\n</DL><p>\n' +
-      '</DL><p>\n</DL><p>\n'
+      '<DT><H3 PERSONAL_TOOLBAR_FOLDER="true">Bookmarks bar</H3>\n<DL><p>\n' +
+      '<DT><A HREF="https://news.ycombinator.com/" ICON="data:image/png;base64,iVBORw0=">Hacker News</A>\n' +
+      '<DT><H3>Reading</H3>\n<DL><p>\n' +
+      '<DT><A HREF="https://example.org/">Example</A>\n' +
+      '<DT><H3>Deep</H3>\n<DL><p>\n<DT><A HREF="https://deep.example/">Deep link</A>\n</DL><p>\n' +
+      '</DL><p>\n</DL><p>\n</DL><p>\n'
     const braveParsed = parseBookmarksHTML(braveHTML)
-    report.import = { items: braveParsed.items.length, folders: braveParsed.folders.length }
-    if (braveParsed.items.length !== 2) report.errors.push('Brave-style import parsed wrong item count: ' + braveParsed.items.length)
-    if (!braveParsed.folders.includes('Reading')) report.errors.push('Brave-style import lost a nested folder')
+    report.import = { items: braveParsed.items.length, folders: braveParsed.folders }
+    if (braveParsed.items.length !== 3) report.errors.push('import parsed wrong item count: ' + braveParsed.items.length)
+    if (braveParsed.folders.includes('Bookmarks bar')) report.errors.push('import kept the browser container as a folder')
+    if (!braveParsed.folders.includes('Reading / Deep')) report.errors.push('import lost nested folder path')
+    if (braveParsed.items.find(i => i.url === 'https://news.ycombinator.com/')?.folder) report.errors.push('container child should be top-level, not foldered')
+    if (!braveParsed.items.find(i => i.url === 'https://news.ycombinator.com/')?.fav) report.errors.push('import dropped the embedded favicon')
+    if (braveParsed.items.find(i => i.url === 'https://deep.example/')?.folder !== 'Reading / Deep') report.errors.push('nested bookmark got wrong folder path')
 
     removeFolder('Research')
     if (bookmarks.find(b => b.url === bmCard.url)?.folder) report.errors.push('folder removal did not unsort bookmark')
