@@ -5,51 +5,80 @@
 /* global drift */
 
 const SELF = new URLSearchParams(location.search).get('selftest') === '1'
+const PROMO = new URLSearchParams(location.search).get('promo') === '1'
+const HEADLESS = SELF || PROMO // staged runs: no saved state, no tour, no persistence
 
 // ---------- constants ----------
 
 const HEAD = 36          // card header height, world units
 const INSET = 8          // frame ring around page content, world units
-const TOOLBAR = 44       // screen px reserved at top
+const TOOLBAR = 60       // screen px reserved at top (floating toolbar)
 const LIVE_ON = 0.42     // canvas zoom at which cards go live
 const LIVE_OFF = 0.38    // hysteresis: zoom below this detaches them
 const MAX_LIVE = 10      // max simultaneously attached Chromium views
 const KEEP_ALIVE = 12    // max background webContents before LRU destroy
 const VIS_MARGIN = 220   // px of offscreen slack still counted as visible
 const MIN_S = 0.06, MAX_S = 2.5
+const ZONE_COLORS = ['#ff9a5e', '#ff6f91', '#ffd166', '#b78cff', '#6ee7a0', '#5ecfe6'] // defaults, warm first
 
 // ---------- state ----------
 
 const V = { s: 0.9, ox: 60, oy: 90 } // world→screen: screen = world*s + o
 const cards = new Map()              // id -> card
+const zones = new Map()              // id -> zone
 const edges = []                     // { from, to }
 let seq = 0
 let activeId = null
+let prevActiveId = null              // the card that was active before this one
 let focusState = null                // { prev: {s,ox,oy} }
+let splitInfo = null                 // { movedId, home: {x,y} } during split focus
+let fullId = null                    // card whose live view covers the whole window
 let paletteOpen = false
 let paletteMode = {}
+let palHits = []                     // cards matching the palette query
+let palRows = []                     // selectable rows: {type:'card',c} | {type:'bm',b}
+let palRowEls = []
+let palSel = -1                      // -1 = "open as address" row
+let bookmarks = []                   // [{url, title, fav, t}], saved outside canvas state
+let bmSet = new Set()                // urls, for O(1) star state
+const closedStack = []               // recently closed cards, newest last (max 20)
+let hitSet = new Set()               // ids highlighted on canvas/minimap
+let ctxOpenFor = null
+let tourOpen = false
+let tourIdx = 0
+let bmOpen = false
 let dirty = false
 let layoutQueued = false
 let animToken = 0
+let viewFreeze = false               // during zoom animations, pages show snapshots
 
 // ---------- dom ----------
 
 const $ = s => document.querySelector(s)
 const viewport = $('#viewport')
+const gridEl = $('#grid')
 const world = $('#world')
 const cardsEl = $('#cards')
+const zonesEl = $('#zones')
 const edgeG = $('#edgeG')
 const zoomPct = $('#zoomPct')
 const emptyEl = $('#empty')
 const minimap = $('#minimap')
 const palette = $('#palette')
 const palInput = $('#palInput')
+const palResults = $('#palResults')
+const palHint = $('#palHint')
+const ctxEl = $('#ctx')
+const toastEl = $('#toast')
+const tourEl = $('#tour')
+const tourSpot = $('#tourSpot')
+const tourCard = $('#tourCard')
 
 // ---------- helpers ----------
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v))
 const sleep = ms => new Promise(r => setTimeout(r, ms))
-const uid = () => 'c' + (++seq) + '_' + Math.random().toString(36).slice(2, 7)
+const uid = p => (p || 'c') + (++seq) + '_' + Math.random().toString(36).slice(2, 7)
 
 function hostOf(url) {
   try { return new URL(url).hostname.replace(/^www\./, '') } catch { return url }
@@ -61,7 +90,7 @@ function normalizeInput(q) {
   if (/^https?:\/\//i.test(q)) return q
   if (/^localhost(:\d+)?(\/.*)?$/.test(q)) return 'http://' + q
   if (!q.includes(' ') && /^[\w-]+(\.[\w-]+)+(:\d+)?(\/.*)?$/.test(q)) return 'https://' + q
-  return 'https://duckduckgo.com/?q=' + encodeURIComponent(q)
+  return 'https://www.google.com/search?q=' + encodeURIComponent(q)
 }
 
 const toWorld = (x, y) => ({ x: (x - V.ox) / V.s, y: (y - V.oy) / V.s })
@@ -81,11 +110,48 @@ function screenBodyRect(c) {
 
 function markDirty() { dirty = true }
 
+function copyText(t) {
+  navigator.clipboard.writeText(t).catch(() => {
+    const ta = document.createElement('textarea')
+    ta.value = t
+    document.body.appendChild(ta)
+    ta.select()
+    document.execCommand('copy')
+    ta.remove()
+  })
+}
+
+let toastTimer = 0
+function toast(msg) {
+  toastEl.textContent = msg
+  toastEl.classList.add('show')
+  clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2400)
+}
+
+function hexToRgba(hex, a) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || '')
+  if (!m) return `rgba(255, 154, 94, ${a})`
+  const n = parseInt(m[1], 16)
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`
+}
+
+// Legacy zones stored an HSL hue instead of a color.
+function hueToHex(h) {
+  // hsl(h, 75%, 62%) → hex; a = s * min(l, 1-l) = 0.75 * 0.38
+  const f = n => {
+    const k = (n + h / 30) % 12
+    const c = 0.62 - 0.285 * Math.max(-1, Math.min(k - 3, 9 - k, 1))
+    return Math.round(255 * Math.min(1, Math.max(0, c))).toString(16).padStart(2, '0')
+  }
+  return '#' + f(0) + f(8) + f(4)
+}
+
 // ---------- cards ----------
 
 function createCard(d, opts = {}) {
   const c = {
-    id: d.id || uid(),
+    id: d.id || uid('c'),
     url: d.url,
     title: d.title || hostOf(d.url),
     fav: d.fav || null,
@@ -96,7 +162,8 @@ function createCard(d, opts = {}) {
     live: false, wantLive: false, retiring: false,
     viewCreated: false, viewReady: false,
     loading: false, error: null,
-    lastSnap: 0, snapPending: false, everLoaded: false
+    lastSnap: 0, snapPending: false, everLoaded: false,
+    moveToken: 0
   }
   buildCardDom(c)
   cards.set(c.id, c)
@@ -123,7 +190,9 @@ function buildCardDom(c) {
       <input class="urledit hidden" spellcheck="false">
       <span class="spin hidden"></span>
       <button class="nb b-reload" title="Reload">⟳</button>
-      <button class="nb b-focus" title="Focus">⤢</button>
+      <button class="nb b-star" title="Bookmark this page">☆</button>
+      <button class="nb b-full" title="Full screen (esc exits)">⛶</button>
+      <button class="nb b-focus" title="Focus · shift-click to split with previous card">⤢</button>
       <button class="nb b-close" title="Close">×</button>
     </div>
     <div class="body">
@@ -134,7 +203,8 @@ function buildCardDom(c) {
       </div>
       <img class="snap hidden" alt="">
     </div>
-    <div class="grip"></div>`
+    <div class="grip"></div>
+    <div class="port" title="Drag onto another card to connect a trail"></div>`
   cardsEl.appendChild(el)
 
   c.el = el
@@ -148,6 +218,7 @@ function buildCardDom(c) {
   c.urlEditEl = el.querySelector('.urledit')
   c.backBtn = el.querySelector('.b-back')
   c.fwdBtn = el.querySelector('.b-fwd')
+  c.starBtn = el.querySelector('.b-star')
 
   if (c.snapshot) { c.snapEl.src = c.snapshot; c.snapEl.classList.remove('hidden') }
   renderHead(c)
@@ -156,13 +227,20 @@ function buildCardDom(c) {
 
   el.addEventListener('mousedown', () => { setActive(c.id); drift.raise(c.id) })
 
+  el.addEventListener('contextmenu', e => {
+    e.preventDefault()
+    openCtx(c, e.clientX, e.clientY)
+  })
+
   head.addEventListener('mousedown', e => {
     if (e.target.closest('button') || e.target.closest('input')) return
     startCardDrag(c, e)
   })
   head.addEventListener('dblclick', e => {
     if (e.target.closest('button') || e.target.closest('input')) return
-    focusCard(c)
+    const prev = prevActiveId && prevActiveId !== c.id ? cards.get(prevActiveId) : null
+    if (e.shiftKey && prev) focusPair(prev, c)
+    else focusCard(c)
   })
 
   // Clicking a zoomed-out thumbnail dives into that page.
@@ -173,7 +251,14 @@ function buildCardDom(c) {
     e.stopPropagation()
     if (c.viewCreated) drift.navAction(c.id, 'reload')
   })
-  el.querySelector('.b-focus').addEventListener('click', e => { e.stopPropagation(); focusCard(c) })
+  c.starBtn.addEventListener('click', e => { e.stopPropagation(); toggleBookmark(c) })
+  el.querySelector('.b-full').addEventListener('click', e => { e.stopPropagation(); enterFullscreen(c) })
+  el.querySelector('.b-focus').addEventListener('click', e => {
+    e.stopPropagation()
+    const prev = prevActiveId && prevActiveId !== c.id ? cards.get(prevActiveId) : null
+    if (e.shiftKey && prev) focusPair(prev, c)
+    else focusCard(c)
+  })
   c.backBtn.addEventListener('click', e => { e.stopPropagation(); drift.navAction(c.id, 'back') })
   c.fwdBtn.addEventListener('click', e => { e.stopPropagation(); drift.navAction(c.id, 'forward') })
 
@@ -190,6 +275,7 @@ function buildCardDom(c) {
   c.urlEditEl.addEventListener('mousedown', e => e.stopPropagation())
 
   el.querySelector('.grip').addEventListener('mousedown', e => startCardResize(c, e))
+  el.querySelector('.port').addEventListener('mousedown', e => startLinkDrag(c, e))
 }
 
 function renderHead(c) {
@@ -203,6 +289,9 @@ function renderHead(c) {
   } else c.favEl.classList.add('hidden')
   c.backBtn.disabled = !c.canGoBack
   c.fwdBtn.disabled = !c.canGoForward
+  const bm = bmSet.has(c.url)
+  c.starBtn.textContent = bm ? '★' : '☆'
+  c.starBtn.classList.toggle('on', bm)
   const host = hostOf(c.url)
   c.phLetterEl.textContent = (host[0] || '?').toUpperCase()
   c.phHostEl.textContent = host
@@ -237,6 +326,7 @@ function navigateCard(c, url) {
 function setActive(id) {
   if (activeId === id) return
   if (activeId) cards.get(activeId)?.el.classList.remove('active')
+  prevActiveId = activeId
   activeId = id
   const c = cards.get(id)
   if (c) { c.el.classList.add('active'); c.lastActive = Date.now() }
@@ -245,24 +335,300 @@ function setActive(id) {
 function closeCard(id) {
   const c = cards.get(id)
   if (!c) return
+  // Remember it (with its trail partners) so "Reopen closed card" can undo this.
+  const links = []
+  for (const e of edges) {
+    if (e.from === id) links.push(e.to)
+    else if (e.to === id) links.push(e.from)
+  }
+  closedStack.push({
+    url: c.url, title: c.title, fav: c.fav,
+    x: c.x, y: c.y, w: c.w, h: c.h,
+    snapshot: c.snapshot, links, t: Date.now()
+  })
+  if (closedStack.length > 20) closedStack.shift()
   if (c.viewCreated) drift.destroyView(id)
   c.el.remove()
   cards.delete(id)
   for (let i = edges.length - 1; i >= 0; i--) {
     if (edges[i].from === id || edges[i].to === id) removeEdgeEl(edges[i]), edges.splice(i, 1)
   }
+  if (splitInfo && splitInfo.movedId === id) splitInfo = null
+  if (fullId === id) exitFullscreen()
   if (activeId === id) activeId = null
+  if (prevActiveId === id) prevActiveId = null
+  hitSet.delete(id)
   updateEmpty()
   markDirty()
   scheduleLayout()
 }
 
-function updateEmpty() { emptyEl.classList.toggle('hidden', cards.size > 0 || SELF) }
+function updateEmpty() { emptyEl.classList.toggle('hidden', cards.size > 0 || HEADLESS) }
+
+function reopenClosed() {
+  const d = closedStack.pop()
+  if (!d) { toast('Nothing to reopen'); return null }
+  let x = d.x, y = d.y
+  if (overlapsAny(x, y, d.w, d.h, 0)) [x, y] = findFreeSpot(x + 36, y + 36, d.w, d.h)
+  const c = createCard({
+    url: d.url, title: d.title, fav: d.fav, snapshot: d.snapshot,
+    x, y, w: d.w, h: d.h
+  })
+  for (const pid of d.links) if (cards.has(pid)) addEdge(pid, c.id)
+  setActive(c.id)
+  flashCard(c)
+  ensureVisible(c)
+  autoGrowZones()
+  toast(`Reopened “${(d.title || hostOf(d.url)).slice(0, 40)}”`)
+  return c
+}
 
 function flashCard(c) {
   c.el.classList.remove('flash')
   void c.el.offsetWidth
   c.el.classList.add('flash')
+}
+
+// ---------- zones ----------
+// Named regions on the canvas ("Trip planning", "Job hunt"). Dragging a zone
+// by its label carries every card whose center sits inside it.
+
+function createZone(d = {}) {
+  const z = {
+    id: d.id || uid('z'),
+    name: d.name || 'Untitled zone',
+    x: d.x, y: d.y, w: d.w || 1200, h: d.h || 800,
+    color: /^#[0-9a-f]{6}$/i.test(d.color || '') ? d.color
+      : Number.isFinite(d.hue) ? hueToHex(d.hue) // legacy hue-based zones
+      : ZONE_COLORS[zones.size % ZONE_COLORS.length]
+  }
+  buildZoneDom(z)
+  zones.set(z.id, z)
+  markDirty()
+  scheduleLayout()
+  return z
+}
+
+function rectHitsAnything(x, y, w, h, pad) {
+  for (const z of zones.values()) {
+    if (x < z.x + z.w + pad && x + w + pad > z.x && y < z.y + z.h + pad && y + h + pad > z.y) return z
+  }
+  for (const c of cards.values()) {
+    if (x < c.x + c.w + pad && x + w + pad > c.x && y < c.y + c.h + pad && y + h + pad > c.y) return c
+  }
+  return null
+}
+
+// Pan (never zoom) so a world rect is on screen.
+function ensureRectVisible(r) {
+  const m = 60
+  const sx = r.x * V.s + V.ox, sy = r.y * V.s + V.oy
+  const sw = r.w * V.s, sh = r.h * V.s
+  if (sx >= m && sy >= TOOLBAR + m && sx + sw <= innerWidth - m && sy + sh <= innerHeight - m) return
+  animateView({
+    s: V.s,
+    ox: innerWidth / 2 - (r.x + r.w / 2) * V.s,
+    oy: TOOLBAR + (innerHeight - TOOLBAR) / 2 - (r.y + r.h / 2) * V.s
+  })
+}
+
+function newZone() {
+  const p = toWorld(innerWidth / 2, TOOLBAR + (innerHeight - TOOLBAR) / 2)
+  const w = Math.max(900, (innerWidth * 0.55) / V.s)
+  const h = Math.max(620, (innerHeight * 0.55) / V.s)
+  // A fresh zone must start empty: slide beside whatever zone or card is in
+  // the way instead of spawning on top and swallowing its contents.
+  let x = p.x - w / 2, y = p.y - h / 2
+  for (let i = 0; i < 50; i++) {
+    const hit = rectHitsAnything(x, y, w, h, 70)
+    if (!hit) break
+    x = hit.x + hit.w + 90
+  }
+  const z = createZone({ x, y, w, h })
+  ensureRectVisible(z)
+  startZoneRename(z)
+  return z
+}
+
+function buildZoneDom(z) {
+  const el = document.createElement('div')
+  el.className = 'zone'
+  el.innerHTML = `
+    <div class="zlabel">
+      <span class="zdot" title="Change color"></span>
+      <input class="zpick" type="color" tabindex="-1">
+      <span class="zname"></span>
+      <input class="znameedit hidden" spellcheck="false">
+      <span class="zcount"></span>
+      <button class="zclose" title="Remove zone (cards stay)">×</button>
+    </div>
+    <div class="zgrip"></div>`
+  zonesEl.appendChild(el)
+
+  z.el = el
+  z.nameEl = el.querySelector('.zname')
+  z.editEl = el.querySelector('.znameedit')
+  z.countEl = el.querySelector('.zcount')
+  z.pickEl = el.querySelector('.zpick')
+  z.nameEl.textContent = z.name
+  positionZone(z)
+  applyZoneColor(z)
+
+  const label = el.querySelector('.zlabel')
+  label.addEventListener('mousedown', e => {
+    if (e.target.closest('.zclose') || e.target.closest('.zdot') ||
+        e.target.closest('.znameedit') || e.target.closest('.zpick')) return
+    startZoneDrag(z, e)
+  })
+  // The dot opens the OS color wheel (with hex entry) via a hidden color input.
+  el.querySelector('.zdot').addEventListener('click', e => {
+    e.stopPropagation()
+    z.pickEl.value = z.color
+    z.pickEl.click()
+  })
+  z.pickEl.addEventListener('input', () => {
+    z.color = z.pickEl.value
+    applyZoneColor(z)
+    markDirty()
+    scheduleLayout()
+  })
+  el.querySelector('.zclose').addEventListener('click', e => { e.stopPropagation(); removeZone(z.id) })
+  el.querySelector('.zgrip').addEventListener('mousedown', e => startZoneResize(z, e))
+
+  z.editEl.addEventListener('keydown', e => {
+    e.stopPropagation()
+    if (e.key === 'Enter') endZoneRename(z, true)
+    else if (e.key === 'Escape') endZoneRename(z, false)
+  })
+  z.editEl.addEventListener('blur', () => endZoneRename(z, true))
+  z.editEl.addEventListener('mousedown', e => e.stopPropagation())
+}
+
+function positionZone(z) {
+  z.el.style.left = z.x + 'px'
+  z.el.style.top = z.y + 'px'
+  z.el.style.width = z.w + 'px'
+  z.el.style.height = z.h + 'px'
+}
+
+function applyZoneColor(z) { z.el.style.setProperty('--zc', z.color) }
+
+function removeZone(id) {
+  const z = zones.get(id)
+  if (!z) return
+  z.el.remove()
+  zones.delete(id)
+  markDirty()
+  scheduleLayout()
+}
+
+function cardsInZone(z) {
+  const out = []
+  for (const c of cards.values()) {
+    const cx = c.x + c.w / 2, cy = c.y + c.h / 2
+    if (cx >= z.x && cx <= z.x + z.w && cy >= z.y && cy <= z.y + z.h) out.push(c)
+  }
+  return out
+}
+
+// A zone grows to keep containing any member card that outgrows it —
+// resize a card past the border and the zone stretches around it.
+function autoGrowZones() {
+  const PAD = 28
+  let changed = false
+  for (const z of zones.values()) {
+    for (const c of cards.values()) {
+      const cx = c.x + c.w / 2, cy = c.y + c.h / 2
+      if (cx < z.x || cx > z.x + z.w || cy < z.y || cy > z.y + z.h) continue
+      const nx = Math.min(z.x, c.x - PAD)
+      const ny = Math.min(z.y, c.y - PAD)
+      const nx2 = Math.max(z.x + z.w, c.x + c.w + PAD)
+      const ny2 = Math.max(z.y + z.h, c.y + c.h + PAD)
+      if (nx !== z.x || ny !== z.y || nx2 !== z.x + z.w || ny2 !== z.y + z.h) {
+        z.x = nx; z.y = ny; z.w = nx2 - nx; z.h = ny2 - ny
+        positionZone(z)
+        changed = true
+      }
+    }
+  }
+  if (changed) { markDirty(); scheduleLayout() }
+}
+
+function updateZoneCount(z) {
+  const n = cardsInZone(z).length
+  const s = n ? String(n) : ''
+  if (z.countEl.textContent !== s) z.countEl.textContent = s
+}
+
+function startZoneRename(z) {
+  z.nameEl.classList.add('hidden')
+  z.editEl.classList.remove('hidden')
+  z.editEl.value = z.name
+  z.editEl.focus()
+  z.editEl.select()
+}
+
+function endZoneRename(z, commit) {
+  if (commit) {
+    const v = z.editEl.value.trim()
+    if (v && v !== z.name) { z.name = v; markDirty() }
+  }
+  z.nameEl.textContent = z.name
+  z.editEl.classList.add('hidden')
+  z.nameEl.classList.remove('hidden')
+}
+
+function startZoneDrag(z, e) {
+  e.preventDefault()
+  const sx = e.clientX, sy = e.clientY, x0 = z.x, y0 = z.y
+  const renameTarget = !!e.target.closest('.zname')
+  const members = cardsInZone(z).map(c => {
+    c.moveToken++ // cancel any in-flight card animation
+    return { c, x0: c.x, y0: c.y }
+  })
+  let moved = 0
+  const move = ev => {
+    const dx = (ev.clientX - sx) / V.s
+    const dy = (ev.clientY - sy) / V.s
+    moved = Math.max(moved, Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy))
+    z.x = x0 + dx
+    z.y = y0 + dy
+    positionZone(z)
+    for (const m of members) {
+      m.c.x = m.x0 + dx
+      m.c.y = m.y0 + dy
+      m.c.el.style.left = m.c.x + 'px'
+      m.c.el.style.top = m.c.y + 'px'
+    }
+    scheduleLayout()
+  }
+  const up = () => {
+    window.removeEventListener('mousemove', move)
+    window.removeEventListener('mouseup', up)
+    markDirty()
+    if (moved < 5 && renameTarget) startZoneRename(z)
+  }
+  window.addEventListener('mousemove', move)
+  window.addEventListener('mouseup', up)
+}
+
+function startZoneResize(z, e) {
+  e.preventDefault()
+  e.stopPropagation()
+  const sx = e.clientX, sy = e.clientY, w0 = z.w, h0 = z.h
+  const move = ev => {
+    z.w = Math.max(320, w0 + (ev.clientX - sx) / V.s)
+    z.h = Math.max(240, h0 + (ev.clientY - sy) / V.s)
+    positionZone(z)
+    scheduleLayout()
+  }
+  const up = () => {
+    window.removeEventListener('mousemove', move)
+    window.removeEventListener('mouseup', up)
+    markDirty()
+  }
+  window.addEventListener('mousemove', move)
+  window.addEventListener('mouseup', up)
 }
 
 // ---------- edges (trails) ----------
@@ -283,6 +649,65 @@ function removeEdgeEl(e) {
   if (el) { el.path.remove(); el.dot.remove(); edgeEls.delete(edgeKey(e)) }
 }
 
+function removeEdge(from, to) {
+  const i = edges.findIndex(e => e.from === from && e.to === to)
+  if (i < 0) return false
+  removeEdgeEl(edges[i])
+  edges.splice(i, 1)
+  markDirty()
+  scheduleLayout()
+  return true
+}
+
+function edgeBetween(aId, bId) {
+  return edges.find(e => (e.from === aId && e.to === bId) || (e.from === bId && e.to === aId))
+}
+
+function connectCards(a, b) {
+  if (!a || !b || a === b) return
+  if (edgeBetween(a.id, b.id)) { toast('Already connected'); return }
+  addEdge(a.id, b.id)
+  flashCard(b)
+  toast('Trail connected — double-click a trail to remove it')
+}
+
+// Drag from a card's ○ port onto another card to draw a trail by hand.
+function startLinkDrag(c, e) {
+  e.preventDefault()
+  e.stopPropagation()
+  const temp = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+  temp.setAttribute('class', 'linkdrag')
+  edgeG.appendChild(temp)
+  const p1 = { x: c.x + c.w, y: c.y + c.h / 2 }
+  let target = null
+  let moved = false
+  const move = ev => {
+    moved = true
+    const p2 = toWorld(ev.clientX, ev.clientY)
+    const dx = Math.max(60, Math.abs(p2.x - p1.x) / 2) * (p2.x >= p1.x ? 1 : -1)
+    temp.setAttribute('d', `M ${p1.x} ${p1.y} C ${p1.x + dx} ${p1.y}, ${p2.x - dx} ${p2.y}, ${p2.x} ${p2.y}`)
+    const el = document.elementFromPoint(ev.clientX, ev.clientY)
+    const cardEl = el && el.closest('.card')
+    const t = cardEl ? cards.get(cardEl.dataset.id) : null
+    if (target && target !== t) target.el.classList.remove('linktarget')
+    target = t && t !== c ? t : null
+    if (target) target.el.classList.add('linktarget')
+  }
+  const up = () => {
+    window.removeEventListener('mousemove', move)
+    window.removeEventListener('mouseup', up)
+    temp.remove()
+    if (target) {
+      target.el.classList.remove('linktarget')
+      connectCards(c, target)
+    } else if (moved) {
+      toast('Drop on another card to connect a trail')
+    }
+  }
+  window.addEventListener('mousemove', move)
+  window.addEventListener('mouseup', up)
+}
+
 function updateEdges() {
   for (const e of edges) {
     const a = cards.get(e.from), b = cards.get(e.to)
@@ -291,6 +716,13 @@ function updateEdges() {
     if (!el) {
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
       const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
+      path.style.pointerEvents = 'stroke'
+      path.style.cursor = 'pointer'
+      path.addEventListener('dblclick', ev => {
+        ev.stopPropagation()
+        removeEdge(e.from, e.to)
+        toast('Trail removed')
+      })
       edgeG.appendChild(path)
       edgeG.appendChild(dot)
       el = { path, dot }
@@ -308,6 +740,124 @@ function updateEdges() {
   }
 }
 
+// The connected component around a card — its full trail, both directions.
+function trailOf(id) {
+  const seen = new Set([id])
+  const q = [id]
+  while (q.length) {
+    const cur = q.shift()
+    for (const e of edges) {
+      const nxt = e.from === cur ? e.to : e.to === cur ? e.from : null
+      if (nxt && !seen.has(nxt)) { seen.add(nxt); q.push(nxt) }
+    }
+  }
+  return seen
+}
+
+// Export a trail as a nested Markdown link list, parents above children.
+function trailMarkdown(id) {
+  const comp = trailOf(id)
+  const kids = new Map()
+  const hasParent = new Set()
+  for (const e of edges) {
+    if (!comp.has(e.from) || !comp.has(e.to)) continue
+    if (!kids.has(e.from)) kids.set(e.from, [])
+    kids.get(e.from).push(e.to)
+    hasParent.add(e.to)
+  }
+  const roots = [...comp].filter(x => !hasParent.has(x))
+  const lines = []
+  const seen = new Set()
+  const emit = (cid, depth) => {
+    if (seen.has(cid)) return
+    seen.add(cid)
+    const c = cards.get(cid)
+    if (!c) return
+    const title = (c.title || hostOf(c.url) || c.url).replace(/[\[\]]/g, '')
+    lines.push('  '.repeat(depth) + `- [${title}](${c.url})`)
+    for (const k of kids.get(cid) || []) emit(k, depth + 1)
+  }
+  for (const r of roots) emit(r, 0)
+  for (const cid of comp) emit(cid, 0) // safety net for pure cycles
+  return lines.join('\n')
+}
+
+// ---------- context menu ----------
+
+function renderCtxMenu(items, x, y) {
+  ctxEl.innerHTML = ''
+  for (const it of items) {
+    const d = document.createElement('div')
+    d.className = 'ctxitem' + (it.danger ? ' danger' : '')
+    d.textContent = it.label
+    d.addEventListener('click', () => { closeCtx(); it.fn() })
+    ctxEl.appendChild(d)
+  }
+  ctxEl.classList.remove('hidden')
+  const r = ctxEl.getBoundingClientRect()
+  ctxEl.style.left = clamp(x, 8, innerWidth - r.width - 8) + 'px'
+  ctxEl.style.top = clamp(y, TOOLBAR, innerHeight - r.height - 8) + 'px'
+  scheduleLayout() // detach live views so the menu is actually on top
+}
+
+function reopenCtxItem() {
+  const d = closedStack[closedStack.length - 1]
+  if (!d) return null
+  return {
+    label: `Reopen closed card (“${(d.title || hostOf(d.url)).slice(0, 24)}”)`,
+    fn: reopenClosed
+  }
+}
+
+function openCanvasCtx(x, y) {
+  ctxOpenFor = 'canvas'
+  const at = toWorld(x, y)
+  const items = [
+    { label: 'New card here', fn: () => openPalette({ at }) }
+  ]
+  const reopen = reopenCtxItem()
+  if (reopen) items.push(reopen)
+  items.push({ label: 'New zone', fn: newZone })
+  renderCtxMenu(items, x, y)
+}
+
+function openCtx(c, x, y) {
+  ctxOpenFor = c.id
+  const comp = trailOf(c.id)
+  const prev = prevActiveId && prevActiveId !== c.id ? cards.get(prevActiveId) : null
+  const items = [
+    { label: 'Copy address', fn: () => { copyText(c.url); toast('Address copied') } },
+    {
+      label: `Copy trail as Markdown (${comp.size} page${comp.size === 1 ? '' : 's'})`,
+      fn: () => { copyText(trailMarkdown(c.id)); toast(`Copied trail · ${comp.size} page${comp.size === 1 ? '' : 's'}`) }
+    }
+  ]
+  items.push({
+    label: bmSet.has(c.url) ? 'Remove bookmark' : 'Bookmark this page',
+    fn: () => toggleBookmark(c)
+  })
+  if (prev) {
+    const t = (prev.title || hostOf(prev.url)).slice(0, 26)
+    const between = edgeBetween(prev.id, c.id)
+    items.push(between
+      ? { label: `Remove trail to “${t}”`, fn: () => { removeEdge(between.from, between.to); toast('Trail removed') } }
+      : { label: `Connect trail from “${t}”`, fn: () => connectCards(prev, c) })
+    items.push({ label: `Split focus with “${t}”`, fn: () => focusPair(prev, c) })
+  }
+  const reopen = reopenCtxItem()
+  if (reopen) items.push(reopen)
+  items.push({ label: 'Close card', danger: true, fn: () => closeCard(c.id) })
+
+  renderCtxMenu(items, x, y)
+}
+
+function closeCtx() {
+  if (!ctxOpenFor) return
+  ctxEl.classList.add('hidden')
+  ctxOpenFor = null
+  scheduleLayout()
+}
+
 // ---------- layout / liveness ----------
 
 function scheduleLayout() {
@@ -320,41 +870,64 @@ function scheduleLayout() {
 function doLayout() {
   layoutQueued = false
   world.style.transform = `translate(${V.ox}px, ${V.oy}px) scale(${V.s})`
-  viewport.style.backgroundSize = `${24 * V.s}px ${24 * V.s}px`
-  viewport.style.backgroundPosition = `${V.ox}px ${V.oy}px`
+  gridEl.style.backgroundSize = `${24 * V.s}px ${24 * V.s}px`
+  gridEl.style.backgroundPosition = `${V.ox}px ${V.oy}px`
   edgeG.setAttribute('stroke-width', String(2.5 / V.s))
+  if (zones.size) {
+    // Zone labels counter-scale so they stay readable from orbit.
+    zonesEl.style.setProperty('--zfs', clamp(14 / V.s, 13, 60) + 'px')
+    for (const z of zones.values()) updateZoneCount(z)
+  }
   decideLiveness()
   const items = []
-  for (const c of cards.values()) {
+  if (fullId && cards.has(fullId)) {
+    // Fullscreen: one page owns the entire area under the toolbar, at 100%.
+    const c = cards.get(fullId)
     if (c.live && c.viewReady) {
-      const r = screenBodyRect(c)
-      items.push({ id: c.id, x: r.x, y: r.y, w: r.w, h: r.h })
+      items.push({ id: c.id, x: 0, y: TOOLBAR, w: innerWidth, h: innerHeight - TOOLBAR })
+    }
+  } else {
+    for (const c of cards.values()) {
+      if (c.live && c.viewReady) {
+        const r = screenBodyRect(c)
+        items.push({ id: c.id, x: r.x, y: r.y, w: r.w, h: r.h })
+      }
     }
   }
-  drift.layout({ zoom: V.s, items })
+  drift.layout({ zoom: fullId ? 1 : V.s, items })
   zoomPct.textContent = Math.round(V.s * 100) + '%'
   updateEdges()
   drawMinimap()
+  if (tourOpen) positionTour() // spotlight tracks its target through pans/zooms
+  if (bmOpen) positionBmPanel()
   pruneViews()
 }
 
 function decideLiveness() {
   const vw = innerWidth, vh = innerHeight
+  // Native page views always sit above the DOM, so any interactive overlay
+  // (palette, context menu, tour, bookmarks panel) needs the views detached.
+  const overlay = paletteOpen || tourOpen || bmOpen || !!ctxOpenFor || viewFreeze
   const want = []
   for (const c of cards.values()) {
     const r = screenRect(c)
     const visible = r.x < vw + VIS_MARGIN && r.x + r.w > -VIS_MARGIN &&
                     r.y < vh + VIS_MARGIN && r.y + r.h > -VIS_MARGIN
     const zoomOk = c.live ? V.s >= LIVE_OFF : V.s >= LIVE_ON
-    c.wantLive = !paletteOpen && visible && zoomOk
+    c.wantLive = !overlay && visible && zoomOk
     if (c.wantLive) want.push(c)
   }
   want.sort((a, b) => b.lastActive - a.lastActive)
   want.slice(MAX_LIVE).forEach(c => { c.wantLive = false })
+  if (fullId && !overlay) {
+    // The fullscreen page stays live regardless of zoom, position, or budget.
+    const fc = cards.get(fullId)
+    if (fc) fc.wantLive = true
+  }
   for (const c of cards.values()) {
     if (c.retiring) continue
     if (c.wantLive && !c.live) goLive(c)
-    else if (!c.wantLive && c.live) retire(c, paletteOpen)
+    else if (!c.wantLive && c.live) retire(c, overlay)
   }
 }
 
@@ -414,7 +987,7 @@ drift.onViewEvent(d => {
   const c = cards.get(d.id)
   if (!c) return
   switch (d.type) {
-    case 'title': c.title = d.title; renderHead(c); markDirty(); break
+    case 'title': c.title = d.title; renderHead(c); markDirty(); if (c.id === fullId) updateFullPill(); break
     case 'favicon': c.fav = d.favicon; renderHead(c); markDirty(); break
     case 'url':
       c.url = d.url
@@ -423,6 +996,7 @@ drift.onViewEvent(d => {
       c.error = null
       renderHead(c)
       markDirty()
+      if (c.id === fullId) updateFullPill()
       break
     case 'loading':
       c.loading = d.loading
@@ -498,10 +1072,15 @@ function ensureVisible(c) {
   }
 }
 
-// ---------- view animation ----------
+// ---------- view / card animation ----------
 
 function animateView(target, ms = 280) {
   const from = { ...V }
+  // Resizing + re-zooming live pages every frame makes their content reflow
+  // mid-flight and looks awful. For zoom-changing animations, freeze pages to
+  // their snapshots (pure GPU scaling) and pop the live view in at the end.
+  // Pure pans keep pages live — moving without rescaling doesn't reflow.
+  viewFreeze = Math.abs(target.s - from.s) / from.s > 0.12
   const tok = ++animToken
   const t0 = performance.now()
   const ease = x => 1 - Math.pow(1 - x, 3)
@@ -513,12 +1092,35 @@ function animateView(target, ms = 280) {
     V.oy = from.oy + (target.oy - from.oy) * k
     doLayout()
     if (k < 1) requestAnimationFrame(step)
-    else markDirty()
+    else {
+      viewFreeze = false
+      markDirty()
+      scheduleLayout()
+    }
   }
   requestAnimationFrame(step)
 }
 
-function worldBBox() {
+function animateCard(c, tx, ty, ms = 300) {
+  const fx = c.x, fy = c.y
+  const tok = ++c.moveToken
+  const t0 = performance.now()
+  const ease = x => 1 - Math.pow(1 - x, 3)
+  function step(now) {
+    if (c.moveToken !== tok || !cards.has(c.id)) return
+    const k = ease(Math.min(1, (now - t0) / ms))
+    c.x = fx + (tx - fx) * k
+    c.y = fy + (ty - fy) * k
+    c.el.style.left = c.x + 'px'
+    c.el.style.top = c.y + 'px'
+    scheduleLayout()
+    if (k < 1) requestAnimationFrame(step)
+    else { autoGrowZones(); markDirty() }
+  }
+  requestAnimationFrame(step)
+}
+
+function worldBBox() { // cards only
   let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity
   for (const c of cards.values()) {
     x1 = Math.min(x1, c.x); y1 = Math.min(y1, c.y)
@@ -527,9 +1129,19 @@ function worldBBox() {
   return { x: x1, y: y1, w: x2 - x1, h: y2 - y1 }
 }
 
+function contentBBox() { // cards + zones
+  let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity
+  for (const r of [...cards.values(), ...zones.values()]) {
+    x1 = Math.min(x1, r.x); y1 = Math.min(y1, r.y)
+    x2 = Math.max(x2, r.x + r.w); y2 = Math.max(y2, r.y + r.h)
+  }
+  if (x1 === Infinity) return null
+  return { x: x1, y: y1, w: x2 - x1, h: y2 - y1 }
+}
+
 function fitAll() {
-  if (!cards.size) return
-  const b = worldBBox()
+  const b = contentBBox()
+  if (!b) return
   const pad = 90
   const s = clamp(Math.min(innerWidth / (b.w + pad * 2), (innerHeight - TOOLBAR) / (b.h + pad * 2)), MIN_S, 1)
   animateView({
@@ -544,21 +1156,95 @@ function focusCard(c) {
   setActive(c.id)
   c.lastActive = Date.now()
   const s = clamp(Math.min((innerWidth - 90) / c.w, (innerHeight - TOOLBAR - 60) / c.h), 0.2, 2.2)
-  animateView({
+  const go = () => animateView({
     s,
     ox: innerWidth / 2 - (c.x + c.w / 2) * s,
     oy: TOOLBAR + (innerHeight - TOOLBAR) / 2 - (c.y + c.h / 2) * s
   })
+  // Fresh thumbnail first, so the frozen frame matches the live page.
+  if (c.live && c.viewCreated) takeSnapshot(c, true).then(go)
+  else go()
+}
+
+// Split focus: glide card b beside card a, fit both on screen. b returns to
+// where it lived when focus ends (unless the user drags it somewhere new).
+function focusPair(a, b) {
+  if (!b || !cards.has(b.id)) return
+  if (!a || a === b || !cards.has(a.id)) { focusCard(b); return }
+  if (!focusState) focusState = { prev: { ...V } }
+  // If the anchor itself was the previously split-moved card, adopt it where
+  // it sits — sending it home mid-computation would misplace the new pair.
+  if (splitInfo && splitInfo.movedId === a.id) splitInfo = null
+  if (!splitInfo || splitInfo.movedId !== b.id) {
+    restoreSplit()
+    splitInfo = { movedId: b.id, home: { x: b.x, y: b.y } }
+  }
+  const gap = 46
+  const tx = a.x + a.w + gap
+  const ty = a.y
+  animateCard(b, tx, ty, 300)
+  setActive(b.id)
+  const x1 = a.x, y1 = Math.min(a.y, ty)
+  const x2 = tx + b.w, y2 = Math.max(a.y + a.h, ty + b.h)
+  const pad = 70
+  const s = clamp(Math.min((innerWidth - pad * 2) / (x2 - x1), (innerHeight - TOOLBAR - pad * 2) / (y2 - y1)), 0.2, 2.2)
+  animateView({
+    s,
+    ox: innerWidth / 2 - ((x1 + x2) / 2) * s,
+    oy: TOOLBAR + (innerHeight - TOOLBAR) / 2 - ((y1 + y2) / 2) * s
+  })
+  toast('Split focus — esc to leave')
+}
+
+function restoreSplit() {
+  if (!splitInfo) return
+  const b = cards.get(splitInfo.movedId)
+  const home = splitInfo.home
+  splitInfo = null
+  if (b) animateCard(b, home.x, home.y, 300)
 }
 
 function exitFocus() {
   if (!focusState) return
-  animateView(focusState.prev)
+  restoreSplit()
+  const target = focusState.prev
   focusState = null
+  const c = activeId && cards.get(activeId)
+  // Fresh thumbnail of the page you were just reading, then glide out.
+  if (c && c.live && c.viewCreated) takeSnapshot(c, true).then(() => animateView(target))
+  else animateView(target)
+}
+
+// True fullscreen: the page's live Chromium view covers the whole window
+// (below the toolbar) at 100% zoom. The canvas is untouched underneath, so
+// exiting drops you back exactly where you were.
+function updateFullPill() {
+  const c = fullId && cards.get(fullId)
+  if (!c) return
+  $('#btnFullUrl').textContent = '⌕ ' + (c.title || hostOf(c.url))
+}
+
+function enterFullscreen(c) {
+  if (!c || !cards.has(c.id)) return
+  fullId = c.id
+  setActive(c.id)
+  c.lastActive = Date.now()
+  $('#fullExitG').classList.remove('hidden')
+  updateFullPill()
+  drift.raise(c.id)
+  scheduleLayout()
+}
+
+function exitFullscreen() {
+  if (!fullId) return
+  fullId = null
+  $('#fullExitG').classList.add('hidden')
+  scheduleLayout()
 }
 
 function zoomAt(px, py, factor) {
   animToken++
+  viewFreeze = false // user took over from any animation
   const ns = clamp(V.s * factor, MIN_S, MAX_S)
   V.ox = px - (px - V.ox) * (ns / V.s)
   V.oy = py - (py - V.oy) * (ns / V.s)
@@ -567,13 +1253,78 @@ function zoomAt(px, py, factor) {
   scheduleLayout()
 }
 
+// ---------- tidy: auto-arrange trails as trees ----------
+
+function tidy() {
+  if (!cards.size) return
+  const seenG = new Set()
+  const comps = []
+  for (const id of cards.keys()) {
+    if (seenG.has(id)) continue
+    const comp = [...trailOf(id)].filter(x => cards.has(x))
+    for (const x of comp) seenG.add(x)
+    comps.push(comp)
+  }
+  comps.sort((a, b) => b.length - a.length)
+
+  const anchor = worldBBox()
+  const GX = 130, GY = 56, COMP_GAP = 170
+  let cy = anchor.y
+  for (const comp of comps) {
+    const compSet = new Set(comp)
+    const kids = new Map()
+    const hasParent = new Set()
+    for (const e of edges) {
+      if (!compSet.has(e.from) || !compSet.has(e.to)) continue
+      if (!kids.has(e.from)) kids.set(e.from, [])
+      kids.get(e.from).push(e.to)
+      hasParent.add(e.to)
+    }
+    const byAge = (p, q) => cards.get(p).createdAt - cards.get(q).createdAt
+    const roots = comp.filter(x => !hasParent.has(x)).sort(byAge)
+    const depth = new Map()
+    const order = []
+    const queue = roots.map(r => [r, 0])
+    while (queue.length) {
+      const [id, d] = queue.shift()
+      if (depth.has(id)) continue
+      depth.set(id, d)
+      order.push(id)
+      for (const k of (kids.get(id) || []).sort(byAge)) queue.push([k, d + 1])
+    }
+    for (const id of comp) if (!depth.has(id)) { depth.set(id, 0); order.push(id) } // pure cycles
+
+    const colW = new Map(), colY = new Map()
+    for (const id of order) {
+      const d = depth.get(id)
+      colW.set(d, Math.max(colW.get(d) || 0, cards.get(id).w))
+    }
+    const colX = new Map()
+    let x = anchor.x
+    for (let d = 0; colW.has(d); d++) { colX.set(d, x); x += colW.get(d) + GX }
+    for (const id of order) {
+      const c = cards.get(id)
+      const d = depth.get(id)
+      animateCard(c, colX.get(d), cy + (colY.get(d) || 0), 380)
+      colY.set(d, (colY.get(d) || 0) + c.h + GY)
+    }
+    cy += Math.max(0, ...colY.values()) - GY + COMP_GAP
+  }
+  markDirty()
+  setTimeout(fitAll, 400)
+  toast(`Tidied ${cards.size} card${cards.size === 1 ? '' : 's'} into ${comps.length} trail${comps.length === 1 ? '' : 's'}`)
+}
+
 // ---------- input ----------
 
 function wireGlobalInput() {
   window.addEventListener('wheel', e => {
+    if (paletteOpen || tourOpen) return // overlays own the wheel
     if (e.target.closest('.no-pan')) return
     e.preventDefault()
+    closeCtx()
     animToken++
+    viewFreeze = false
     if (e.ctrlKey || e.metaKey) {
       zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.01))
     } else {
@@ -586,9 +1337,13 @@ function wireGlobalInput() {
 
   // Drag empty canvas to pan.
   viewport.addEventListener('mousedown', e => {
+    if (tourOpen) return
     if (e.target.closest('.card') || e.target.closest('#toolbar') ||
-        e.target.closest('#minimap') || e.target.closest('#palette')) return
+        e.target.closest('#minimap') || e.target.closest('#palette') ||
+        e.target.closest('.zone') || e.target.closest('#ctx') ||
+        e.target.closest('#bmpanel')) return
     animToken++
+    viewFreeze = false
     const sx = e.clientX, sy = e.clientY, ox = V.ox, oy = V.oy
     const move = ev => {
       V.ox = ox + (ev.clientX - sx)
@@ -605,15 +1360,40 @@ function wireGlobalInput() {
   })
 
   viewport.addEventListener('dblclick', e => {
+    if (tourOpen) return
     if (e.target.closest('.card') || e.target.closest('#toolbar') ||
-        e.target.closest('#minimap') || e.target.closest('#palette')) return
+        e.target.closest('#minimap') || e.target.closest('#palette') ||
+        e.target.closest('.zone') || e.target.closest('#ctx') ||
+        e.target.closest('#bmpanel') || e.target.closest('#edges')) return
     openPalette({ at: toWorld(e.clientX, e.clientY) })
+  })
+
+  window.addEventListener('mousedown', e => {
+    if (ctxOpenFor && !e.target.closest('#ctx')) closeCtx()
+    if (bmOpen && !e.target.closest('#bmpanel') && !e.target.closest('#btnBookmarks')) closeBmPanel()
+  }, true)
+
+  // Right-click on empty canvas: quick actions for the spot under the cursor.
+  viewport.addEventListener('contextmenu', e => {
+    if (tourOpen) return
+    if (e.target.closest('.card') || e.target.closest('#toolbar') ||
+        e.target.closest('#minimap') || e.target.closest('#palette') ||
+        e.target.closest('.zone') || e.target.closest('#ctx') ||
+        e.target.closest('#bmpanel') || e.target.closest('#edges')) return
+    e.preventDefault()
+    openCanvasCtx(e.clientX, e.clientY)
   })
 
   window.addEventListener('keydown', e => {
     if (e.target.tagName === 'INPUT') return
+    if (tourOpen) {
+      if (e.key === 'Escape') endTour()
+      else if (e.key === 'Enter' || e.key === 'ArrowRight') nextTour()
+      else if (e.key === 'ArrowLeft') prevTour()
+      return
+    }
     const pan = 80
-    if (e.key === 'Escape') { paletteOpen ? closePalette() : exitFocus() }
+    if (e.key === 'Escape') onEscape()
     else if (e.key === 'ArrowLeft') { V.ox += pan; scheduleLayout() }
     else if (e.key === 'ArrowRight') { V.ox -= pan; scheduleLayout() }
     else if (e.key === 'ArrowUp') { V.oy += pan; scheduleLayout() }
@@ -623,7 +1403,21 @@ function wireGlobalInput() {
   window.addEventListener('resize', scheduleLayout)
 
   $('#btnNew').addEventListener('click', () => openPalette({}))
+  $('#btnZone').addEventListener('click', newZone)
+  $('#btnTidy').addEventListener('click', tidy)
   $('#btnFit').addEventListener('click', fitAll)
+  $('#btnBookmarks').addEventListener('click', () => { bmOpen ? closeBmPanel() : openBmPanel() })
+  $('#btnFullExit').addEventListener('click', exitFullscreen)
+  $('#btnFullUrl').addEventListener('click', () => {
+    const c = fullId && cards.get(fullId)
+    if (c) openPalette({ navigateId: c.id, prefill: c.url })
+  })
+  $('#btnZoomIn').addEventListener('click', () => zoomAt(innerWidth / 2, TOOLBAR + (innerHeight - TOOLBAR) / 2, 1.25))
+  $('#btnZoomOut').addEventListener('click', () => zoomAt(innerWidth / 2, TOOLBAR + (innerHeight - TOOLBAR) / 2, 0.8))
+  $('#btnHelp').addEventListener('click', startTour)
+  $('#tourNext').addEventListener('click', nextTour)
+  $('#tourBack').addEventListener('click', prevTour)
+  $('#tourSkip').addEventListener('click', endTour)
 
   minimap.addEventListener('mousedown', e => {
     const t = minimapTransform()
@@ -638,9 +1432,23 @@ function wireGlobalInput() {
     })
   })
 
+  // A new query invalidates any arrow/hover selection — Enter should go back
+  // to meaning "open what I typed" until the user re-picks a result.
+  palInput.addEventListener('input', () => { palSel = -1; renderPalResults() })
   palInput.addEventListener('keydown', e => {
     e.stopPropagation()
-    if (e.key === 'Enter') {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      if (!palRows.length) return
+      palSel = e.key === 'ArrowDown'
+        ? Math.min(palSel + 1, palRows.length - 1)
+        : Math.max(palSel - 1, -1)
+      renderPalSelection()
+    } else if (e.key === 'Enter') {
+      if (palSel >= 0 && palRows[palSel]) {
+        pickPalRow(palRows[palSel])
+        return
+      }
       const u = normalizeInput(palInput.value)
       const mode = paletteMode
       closePalette()
@@ -655,11 +1463,32 @@ function wireGlobalInput() {
   palette.addEventListener('mousedown', e => { if (e.target === palette) closePalette() })
 }
 
+function onEscape() {
+  if (tourOpen) endTour()
+  else if (paletteOpen) closePalette()
+  else if (bmOpen) closeBmPanel()
+  else if (fullId) exitFullscreen()
+  else if (ctxOpenFor) closeCtx()
+  else exitFocus()
+}
+
+// Swallow the click that the browser fires right after a real drag, so
+// releasing a title-drag doesn't also open the URL editor.
+function suppressNextClick() {
+  const kill = ev => { ev.stopPropagation(); ev.preventDefault() }
+  window.addEventListener('click', kill, true)
+  setTimeout(() => window.removeEventListener('click', kill, true), 0)
+}
+
 function startCardDrag(c, e) {
   e.preventDefault()
   setActive(c.id)
+  c.moveToken++ // cancel any in-flight animation fighting the drag
+  if (splitInfo && splitInfo.movedId === c.id) splitInfo = null // user re-homed it
   const sx = e.clientX, sy = e.clientY, x0 = c.x, y0 = c.y
+  let moved = 0
   const move = ev => {
+    moved = Math.max(moved, Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy))
     c.x = x0 + (ev.clientX - sx) / V.s
     c.y = y0 + (ev.clientY - sy) / V.s
     c.el.style.left = c.x + 'px'
@@ -669,6 +1498,8 @@ function startCardDrag(c, e) {
   const up = () => {
     window.removeEventListener('mousemove', move)
     window.removeEventListener('mouseup', up)
+    if (moved >= 5) suppressNextClick()
+    autoGrowZones()
     markDirty()
   }
   window.addEventListener('mousemove', move)
@@ -685,6 +1516,7 @@ function startCardResize(c, e) {
     c.h = Math.max(240, h0 + (ev.clientY - sy) / V.s)
     c.el.style.width = c.w + 'px'
     c.el.style.height = c.h + 'px'
+    autoGrowZones() // zones stretch live as a card outgrows them
     scheduleLayout()
   }
   const up = () => {
@@ -696,13 +1528,104 @@ function startCardResize(c, e) {
   window.addEventListener('mouseup', up)
 }
 
-// ---------- palette ----------
+// ---------- bookmarks ----------
+
+function refreshBookmarkUI() {
+  bmSet = new Set(bookmarks.map(b => b.url))
+  for (const c of cards.values()) renderHead(c)
+}
+
+function toggleBookmark(c) {
+  if (bmSet.has(c.url)) {
+    bookmarks = bookmarks.filter(b => b.url !== c.url)
+    toast('Bookmark removed')
+  } else {
+    // Skip data: favicons — the bookmarks file should stay tiny.
+    const fav = (c.fav && /^https?:/i.test(c.fav)) ? c.fav : null
+    bookmarks.unshift({ url: c.url, title: c.title || hostOf(c.url), fav, t: Date.now() })
+    if (bookmarks.length > 500) bookmarks.length = 500
+    toast('Bookmarked ★ — find it in ⌘T')
+  }
+  drift.bookmarksSave(bookmarks)
+  refreshBookmarkUI()
+  if (bmOpen) renderBmPanel()
+}
+
+// ---------- bookmarks panel (toolbar ★) ----------
+
+const bmPanel = $('#bmpanel')
+const bmList = $('#bmlist')
+
+function positionBmPanel() {
+  const r = $('#btnBookmarks').getBoundingClientRect()
+  const w = bmPanel.offsetWidth
+  bmPanel.style.left = clamp(r.left, 8, innerWidth - w - 8) + 'px'
+  bmPanel.style.top = (r.bottom + 10) + 'px'
+}
+
+function renderBmPanel() {
+  bmList.innerHTML = ''
+  if (!bookmarks.length) {
+    const d = document.createElement('div')
+    d.className = 'bmempty'
+    d.textContent = 'No bookmarks yet — hit ☆ on any card.'
+    bmList.appendChild(d)
+    return
+  }
+  for (const b of bookmarks) {
+    const row = palRowDom('★', b.fav, b.title || b.url, hostOf(b.url), true)
+    const del = document.createElement('button')
+    del.className = 'bmdel'
+    del.title = 'Remove bookmark'
+    del.textContent = '×'
+    del.addEventListener('click', ev => {
+      ev.stopPropagation()
+      bookmarks = bookmarks.filter(x => x.url !== b.url)
+      drift.bookmarksSave(bookmarks)
+      refreshBookmarkUI()
+      renderBmPanel()
+      toast('Bookmark removed')
+    })
+    row.appendChild(del)
+    row.addEventListener('click', () => {
+      closeBmPanel()
+      const c = newCard(b.url)
+      flashCard(c)
+    })
+    bmList.appendChild(row)
+  }
+}
+
+function openBmPanel() {
+  closeCtx()
+  if (paletteOpen) closePalette()
+  renderBmPanel()
+  bmPanel.classList.remove('hidden')
+  bmOpen = true
+  positionBmPanel()
+  scheduleLayout() // detach live views so the panel sits on top
+}
+
+function closeBmPanel() {
+  if (!bmOpen) return
+  bmPanel.classList.add('hidden')
+  bmOpen = false
+  scheduleLayout()
+}
+
+// ---------- palette (open + search) ----------
 
 function openPalette(mode) {
+  closeCtx()
   paletteMode = mode || {}
   palette.classList.remove('hidden')
   palInput.value = paletteMode.prefill || ''
+  palHint.textContent = paletteMode.navigateId
+    ? '↵ set this card’s address · esc cancel'
+    : '↵ open on the canvas · ↑↓ pick a card or bookmark · esc cancel'
   paletteOpen = true
+  palSel = -1
+  renderPalResults()
   scheduleLayout() // detaches live views so the overlay is actually on top
   window.focus()
   palInput.focus()
@@ -714,15 +1637,136 @@ function closePalette() {
   palette.classList.add('hidden')
   paletteOpen = false
   paletteMode = {}
+  clearHits()
+  palResults.classList.add('hidden')
+  palResults.innerHTML = ''
+  palHits = []
+  palRows = []
+  palRowEls = []
+  palSel = -1
   scheduleLayout()
+}
+
+function clearHits() {
+  for (const id of hitSet) cards.get(id)?.el.classList.remove('hit')
+  hitSet = new Set()
+}
+
+function pickPalRow(row) {
+  const mode = paletteMode
+  closePalette()
+  if (row.type === 'card') jumpToCard(row.c)
+  else newCard(row.b.url, mode.at)
+}
+
+function palRowDom(iconText, favUrl, titleText, hostText, isBm) {
+  const row = document.createElement('div')
+  row.className = 'palrow' + (isBm ? ' bm' : '')
+  const fav = document.createElement('span')
+  fav.className = 'prfav'
+  if (favUrl) {
+    const img = document.createElement('img')
+    img.src = favUrl
+    img.onerror = () => { img.remove(); fav.textContent = iconText }
+    fav.appendChild(img)
+  } else fav.textContent = iconText
+  const title = document.createElement('span')
+  title.className = 'prtitle'
+  title.textContent = titleText
+  const host = document.createElement('span')
+  host.className = 'prhost'
+  host.textContent = hostText
+  row.append(fav, title, host)
+  return row
+}
+
+function renderPalResults() {
+  clearHits()
+  const q = palInput.value.trim().toLowerCase()
+  palHits = []
+  palRows = []
+  palRowEls = []
+  palResults.innerHTML = ''
+  if (paletteMode.navigateId) {
+    palResults.classList.add('hidden')
+    palSel = -1
+    drawMinimap()
+    return
+  }
+
+  const addSection = label => {
+    const s = document.createElement('div')
+    s.className = 'palsec'
+    s.textContent = label
+    palResults.appendChild(s)
+  }
+  const addRow = (rowEl, rowData) => {
+    const i = palRows.length
+    palRows.push(rowData)
+    palRowEls.push(rowEl)
+    rowEl.addEventListener('mouseenter', () => { palSel = i; renderPalSelection() })
+    rowEl.addEventListener('click', () => pickPalRow(rowData))
+    palResults.appendChild(rowEl)
+  }
+
+  if (q) {
+    palHits = [...cards.values()]
+      .filter(c => (c.title || '').toLowerCase().includes(q) || (c.url || '').toLowerCase().includes(q))
+      .sort((a, b) => b.lastActive - a.lastActive)
+      .slice(0, 6)
+    hitSet = new Set(palHits.map(c => c.id))
+    for (const c of palHits) c.el.classList.add('hit')
+    if (palHits.length) {
+      addSection('On your canvas')
+      for (const c of palHits) {
+        addRow(palRowDom((hostOf(c.url)[0] || '?').toUpperCase(), c.fav, c.title || c.url, hostOf(c.url), false), { type: 'card', c })
+      }
+    }
+    const bmHits = bookmarks
+      .filter(b => (b.title || '').toLowerCase().includes(q) || (b.url || '').toLowerCase().includes(q))
+      .slice(0, 6)
+    if (bmHits.length) {
+      addSection('Bookmarks')
+      for (const b of bmHits) {
+        addRow(palRowDom('★', b.fav, b.title || b.url, hostOf(b.url), true), { type: 'bm', b })
+      }
+    }
+  } else if (bookmarks.length) {
+    // Empty query: the palette doubles as your bookmarks shelf.
+    addSection('Bookmarks')
+    for (const b of bookmarks.slice(0, 8)) {
+      addRow(palRowDom('★', b.fav, b.title || b.url, hostOf(b.url), true), { type: 'bm', b })
+    }
+  }
+
+  palSel = clamp(palSel, -1, palRows.length - 1)
+  palResults.classList.toggle('hidden', palRows.length === 0)
+  renderPalSelection()
+  drawMinimap()
+}
+
+function renderPalSelection() {
+  palRowEls.forEach((el, i) => el.classList.toggle('sel', i === palSel))
+}
+
+function jumpToCard(c) {
+  if (!cards.has(c.id)) return
+  focusCard(c)
+  flashCard(c)
 }
 
 // ---------- shortcuts from the app menu / page views ----------
 
 drift.onUIKey(({ key }) => {
+  if (tourOpen && key !== 'escape' && key !== 'tour') return
   switch (key) {
-    case 'escape': paletteOpen ? closePalette() : exitFocus(); break
+    case 'escape': onEscape(); break
+    case 'tour': tourOpen ? endTour() : startTour(); break
     case 'newcard': openPalette({}); break
+    case 'search': openPalette({}); break
+    case 'newzone': newZone(); break
+    case 'reopen': reopenClosed(); break
+    case 'tidy': tidy(); break
     case 'closecard': if (activeId) closeCard(activeId); break
     case 'fit': fitAll(); break
     case 'zoomin': zoomAt(innerWidth / 2, innerHeight / 2, 1.25); break
@@ -740,8 +1784,8 @@ drift.onUIKey(({ key }) => {
 // ---------- minimap ----------
 
 function minimapTransform() {
-  if (!cards.size) return null
-  const b = worldBBox()
+  const b = contentBBox()
+  if (!b) return null
   // Include the current viewport in the bounds so the view rect stays on-map.
   const v1 = toWorld(0, 0), v2 = toWorld(innerWidth, innerHeight)
   const x1 = Math.min(b.x, v1.x), y1 = Math.min(b.y, v1.y)
@@ -752,34 +1796,172 @@ function minimapTransform() {
 }
 
 function drawMinimap() {
-  const show = cards.size > 0
+  const show = cards.size > 0 || zones.size > 0
   minimap.classList.toggle('hidden', !show)
   if (!show) return
   const ctx = minimap.getContext('2d')
   const t = minimapTransform()
+  if (!t) return
   ctx.setTransform(2, 0, 0, 2, 0, 0) // canvas is 360x240 for 180x120 css px
   ctx.clearRect(0, 0, 180, 120)
+  for (const z of zones.values()) {
+    ctx.fillStyle = hexToRgba(z.color, 0.16)
+    ctx.strokeStyle = hexToRgba(z.color, 0.5)
+    ctx.lineWidth = 1
+    ctx.fillRect(t.ox + z.x * t.k, t.oy + z.y * t.k, z.w * t.k, z.h * t.k)
+    ctx.strokeRect(t.ox + z.x * t.k, t.oy + z.y * t.k, z.w * t.k, z.h * t.k)
+  }
   for (const c of cards.values()) {
-    ctx.fillStyle = c.id === activeId ? 'rgba(94,234,212,0.85)' : 'rgba(139,147,167,0.55)'
+    ctx.fillStyle = hitSet.has(c.id) ? 'rgba(255,214,90,0.95)'
+      : c.id === activeId ? 'rgba(255,180,105,0.95)' : 'rgba(214,206,222,0.5)'
     ctx.fillRect(t.ox + c.x * t.k, t.oy + c.y * t.k, Math.max(3, c.w * t.k), Math.max(2, c.h * t.k))
   }
   const v1 = toWorld(0, 0), v2 = toWorld(innerWidth, innerHeight)
-  ctx.strokeStyle = 'rgba(94,234,212,0.9)'
+  ctx.strokeStyle = 'rgba(255,180,105,0.9)'
   ctx.lineWidth = 1
   ctx.strokeRect(t.ox + v1.x * t.k, t.oy + v1.y * t.k, (v2.x - v1.x) * t.k, (v2.y - v1.y) * t.k)
+}
+
+// ---------- walkthrough ----------
+// First-launch guided tour: a glass coach-mark card plus a sliding spotlight
+// over the real UI. Shown once (localStorage flag), replayable via ? or the
+// View menu.
+
+const TOUR_STEPS = [
+  {
+    title: 'Welcome to Drift',
+    body: 'There are no tabs here. Every page is a <b>card on an infinite canvas</b> — your browsing becomes a map you can see and rearrange. This tour takes about a minute.'
+  },
+  {
+    title: 'Glide around',
+    body: 'Scroll with two fingers to <b>pan</b>. Pinch or <kbd>⌘</kbd>+scroll to <b>zoom</b> — pull back far enough and your pages become a constellation of thumbnails. <kbd>⌘0</kbd> fits everything on screen.'
+  },
+  {
+    title: 'This is a page card',
+    body: 'Drag the <b>header</b> to move it, the corner grip to resize. <b>Double-click the header</b> to focus it — and <b>⛶</b> takes the page truly full-screen. <kbd>esc</kbd> floats you back out. Click its title to change the address.',
+    target: () => [...cards.values()][0]?.el
+  },
+  {
+    title: 'Open anything',
+    body: 'Press <kbd>⌘T</kbd> or double-click any empty spot on the canvas. Type an address or just search. Hit <b>☆</b> on any card to bookmark it — your bookmarks live right here in <kbd>⌘T</kbd>.',
+    target: () => $('#btnNew')
+  },
+  {
+    title: 'Trails, not history',
+    body: 'When a page opens a link "in a new tab", Drift spawns a <b>child card with a trail line</b> back to its parent. Draw one yourself: <b>drag the ○ on a card\'s right edge onto another card</b>. Double-click a trail to remove it, right-click a card to copy a whole trail as Markdown.',
+    target: () => [...cards.values()][1]?.el
+  },
+  {
+    title: 'Zones keep you organized',
+    body: 'Zones are named regions — "Trip planning", "Job hunt". <b>Drag the label</b> and every card inside travels along. Click the dot to recolor, the name to rename. <kbd>⇧⌘N</kbd> makes a new one.',
+    target: () => [...zones.values()][0]?.el.querySelector('.zlabel') || $('#btnZone')
+  },
+  {
+    title: 'Find and tidy',
+    body: '<kbd>⌘F</kbd> searches every card on your canvas — matches light up on the map. <b>Tidy</b> (<kbd>⇧⌘T</kbd>) auto-arranges your trails into clean trees.',
+    target: () => $('#btnTidy')
+  },
+  {
+    title: 'It all just stays',
+    body: 'Cards, trails, zones, bookmarks — everything lives <b>on your machine</b> and is right where you left it next launch. Closed something by accident? <b>Right-click → Reopen closed card</b>. Replay this tour anytime with <kbd>?</kbd>. Now go drift. ◍',
+    target: () => $('#btnHelp')
+  }
+]
+
+function startTour() {
+  closeCtx()
+  if (paletteOpen) closePalette()
+  tourOpen = true
+  tourIdx = 0
+  tourEl.classList.remove('hidden')
+  renderTourStep()
+  scheduleLayout() // detach live views under the overlay
+}
+
+function endTour() {
+  if (!tourOpen) return
+  tourOpen = false
+  tourEl.classList.add('hidden')
+  try { localStorage.setItem('drift-tour-done', '1') } catch {}
+  scheduleLayout()
+}
+
+function nextTour() {
+  if (tourIdx >= TOUR_STEPS.length - 1) { endTour(); return }
+  tourIdx++
+  renderTourStep()
+}
+
+function prevTour() {
+  if (tourIdx > 0) { tourIdx--; renderTourStep() }
+}
+
+function renderTourStep() {
+  const step = TOUR_STEPS[tourIdx]
+  if (!step) return
+  $('#tourStepNum').textContent = `${tourIdx + 1} / ${TOUR_STEPS.length}`
+  $('#tourTitle').textContent = step.title
+  $('#tourBody').innerHTML = step.body
+  $('#tourNext').textContent = tourIdx === TOUR_STEPS.length - 1 ? 'Start drifting ◍' : 'Next ›'
+  $('#tourBack').classList.toggle('hidden', tourIdx === 0)
+  tourCard.classList.toggle('center', !stepTarget(step))
+  positionTour()
+}
+
+function stepTarget(step) {
+  const t = step.target && step.target()
+  return t && t.getBoundingClientRect ? t : null
+}
+
+// Positions are re-derived every layout frame, so the spotlight tracks its
+// target through pans, zooms, and window resizes.
+function positionTour() {
+  if (!tourOpen) return
+  const step = TOUR_STEPS[tourIdx]
+  const t = stepTarget(step)
+  if (t) {
+    const r = t.getBoundingClientRect()
+    const pad = 10
+    tourSpot.style.left = (r.left - pad) + 'px'
+    tourSpot.style.top = (r.top - pad) + 'px'
+    tourSpot.style.width = (r.width + pad * 2) + 'px'
+    tourSpot.style.height = (r.height + pad * 2) + 'px'
+  } else {
+    tourSpot.style.left = innerWidth / 2 + 'px'
+    tourSpot.style.top = innerHeight / 2 + 'px'
+    tourSpot.style.width = '0px'
+    tourSpot.style.height = '0px'
+  }
+  const cw = tourCard.offsetWidth, ch = tourCard.offsetHeight
+  let x, y
+  if (t) {
+    const r = t.getBoundingClientRect()
+    x = clamp(r.left + r.width / 2 - cw / 2, 16, innerWidth - cw - 16)
+    y = r.bottom + 22
+    if (y + ch > innerHeight - 16) y = r.top - ch - 22
+    if (y < 16) y = clamp(innerHeight / 2 - ch / 2, 16, innerHeight - ch - 16)
+  } else {
+    x = (innerWidth - cw) / 2
+    y = clamp(innerHeight * 0.42 - ch / 2, 16, innerHeight - ch - 16)
+  }
+  tourCard.style.left = x + 'px'
+  tourCard.style.top = y + 'px'
 }
 
 // ---------- persistence ----------
 
 function serialize() {
   return {
-    v: 1,
+    v: 2,
     seq,
     view: { ...V },
     cards: [...cards.values()].map(c => ({
       id: c.id, url: c.url, title: c.title, fav: c.fav,
       x: c.x, y: c.y, w: c.w, h: c.h,
       snapshot: c.snapshot, createdAt: c.createdAt, lastActive: c.lastActive
+    })),
+    zones: [...zones.values()].map(z => ({
+      id: z.id, name: z.name, x: z.x, y: z.y, w: z.w, h: z.h, color: z.color
     })),
     edges: edges.map(e => ({ ...e }))
   }
@@ -792,7 +1974,8 @@ function restore(st) {
     V.ox = st.view.ox
     V.oy = st.view.oy
   }
-  for (const d of st.cards) createCard(d, { restored: true })
+  for (const zd of st.zones || []) createZone(zd)
+  for (const d of st.cards || []) createCard(d, { restored: true })
   for (const e of st.edges || []) addEdge(e.from, e.to, true)
   dirty = false
 }
@@ -802,6 +1985,7 @@ function firstRun() {
   const a = createCard({ url: 'https://en.wikipedia.org/wiki/Memex', x: 0, y: 0, w: 820, h: 580 })
   const b = createCard({ url: 'https://en.wikipedia.org/wiki/As_We_May_Think', x: 940, y: 120, w: 820, h: 580 })
   addEdge(a.id, b.id)
+  createZone({ x: -80, y: -90, w: 1930, h: 880, name: 'How Drift thinks', color: '#ff9a5e' })
   setActive(a.id)
   fitAll()
 }
@@ -854,36 +2038,223 @@ async function runSelftest() {
       url: x.url, title: x.title, loaded: x.everLoaded, hasSnapshot: !!x.snapshot
     }))
     for (const x of [a, b, c]) if (!x.everLoaded) report.errors.push('did not finish loading: ' + x.url)
+
+    // ---- v0.2 features ----
+    createZone({ x: -140, y: -220, w: 2100, h: 1700, name: 'Research' })
+    if (zones.size !== 1) report.errors.push('zone not created')
+    if (!/^#[0-9a-f]{6}$/i.test(serialize().zones[0].color || '')) report.errors.push('zone color not persisted as hex')
+
+    openPalette({})
+    palInput.value = 'memex'
+    palInput.dispatchEvent(new Event('input', { bubbles: true }))
+    await sleep(150)
+    report.searchHits = palHits.length
+    if (!palHits.length) report.errors.push('canvas search found nothing for "memex"')
+    closePalette()
+
+    const md = trailMarkdown(a.id)
+    report.trailLines = md.split('\n').length
+    if (!md.includes('https://en.wikipedia.org/wiki/Memex')) report.errors.push('trail markdown missing expected link')
+
+    const edgesBefore = edges.length
+    connectCards(b, c) // manual trail (same path as the port drag)
+    if (edges.length !== edgesBefore + 1) report.errors.push('manual trail connect failed')
+    if (!removeEdge(b.id, c.id)) report.errors.push('manual trail remove failed')
+    if (edges.length !== edgesBefore) report.errors.push('edge count wrong after connect/remove')
+
+    focusPair(b, c)
+    await sleep(500)
+    if (!splitInfo) report.errors.push('split focus did not engage')
+    exitFocus()
+    await sleep(450)
+
+    // new zones must not spawn on top of existing zones or cards
+    const z2 = newZone()
+    const z1 = [...zones.values()][0]
+    if (z2.x < z1.x + z1.w && z2.x + z2.w > z1.x && z2.y < z1.y + z1.h && z2.y + z2.h > z1.y) {
+      report.errors.push('new zone spawned overlapping an existing zone')
+    }
+    removeZone(z2.id)
+
+    enterFullscreen(b)
+    await sleep(700)
+    if (fullId !== b.id) report.errors.push('fullscreen did not engage')
+    const fshot = await drift.snapshot(b.id, 1000)
+    if (fshot) await drift.selftestArtifact('selftest-fullscreen.png', fshot)
+    else report.errors.push('fullscreen snapshot failed')
+    exitFullscreen()
+    if (fullId) report.errors.push('fullscreen did not exit')
+    await sleep(300)
+
+    // reopen closed card: geometry, snapshot, and trail come back
+    const sizeBefore = cards.size
+    const edgeCountBefore = edges.length
+    closeCard(c.id)
+    const reopened = reopenClosed()
+    if (!reopened || cards.size !== sizeBefore) report.errors.push('reopen closed card failed')
+    if (edges.length !== edgeCountBefore) report.errors.push('reopened card did not reconnect its trail')
+
+    tidy()
+    await sleep(900)
+
+    const bmCard = [...cards.values()][0]
+    toggleBookmark(bmCard)
+    if (bookmarks.length !== 1) report.errors.push('bookmark not saved')
+    openPalette({})
+    await sleep(120)
+    if (!palRows.some(r => r.type === 'bm')) report.errors.push('palette does not list bookmarks')
+    closePalette()
+
+    openBmPanel()
+    if (!bmOpen) report.errors.push('bookmarks panel did not open')
+    if (!bmList.querySelectorAll('.palrow').length) report.errors.push('bookmarks panel shows no rows')
+    closeBmPanel()
+
+    toggleBookmark(bmCard)
+    if (bookmarks.length !== 0) report.errors.push('bookmark not removed')
+
+    const growZone = [...zones.values()][0]
+    const growCard = [...cards.values()][0]
+    growCard.x = growZone.x + 100 // keep its center inside the zone
+    growCard.y = growZone.y + 100
+    growCard.el.style.left = growCard.x + 'px'
+    growCard.el.style.top = growCard.y + 'px'
+    const zoneW0 = growZone.w
+    growCard.w = growZone.w + 600 // outgrow the zone on purpose
+    growCard.el.style.width = growCard.w + 'px'
+    autoGrowZones()
+    if (growZone.w <= zoneW0) report.errors.push('zone did not auto-grow around an oversized card')
+
+    startTour()
+    if (!tourOpen) report.errors.push('walkthrough did not open')
+    for (let i = 0; i < TOUR_STEPS.length + 2 && tourOpen; i++) { nextTour(); await sleep(50) }
+    if (tourOpen) report.errors.push('walkthrough did not finish after advancing')
+    startTour() // leave it open on the welcome step so the final capture shows it
+    await sleep(300)
+
+    report.v2 = { zones: zones.size, searchHits: report.searchHits, tourSteps: TOUR_STEPS.length }
   } catch (err) {
     report.errors.push(String(err && err.stack || err))
   }
   await drift.selftestDone(report)
 }
 
+// ---------- backdrop ----------
+// A fresh full-bleed photo every launch (Brave-style). Random seed per boot;
+// if the network is down, a layered aurora gradient takes its place.
+
+function initBackdrop() {
+  const img = document.getElementById('bgimg')
+  const seed = Math.random().toString(36).slice(2, 10)
+  const w = Math.min(3840, Math.round(innerWidth * (devicePixelRatio || 1)))
+  const h = Math.min(2160, Math.round(innerHeight * (devicePixelRatio || 1)))
+  img.addEventListener('load', () => document.body.classList.add('bgready'))
+  img.addEventListener('error', () => document.body.classList.add('nobg'))
+  img.src = `https://picsum.photos/seed/${seed}/${Math.max(w, 1600)}/${Math.max(h, 1000)}`
+}
+
+// ---------- promo screenshot ----------
+// `npm run promoshot` stages a biology research canvas — a trail of connected
+// pages inside a zone — and captures the window for the landing page.
+
+async function runPromoshot() {
+  const W = 780, H = 560
+  const mk = (url, x, y) => createCard({ url, x, y, w: W, h: H })
+  const cell = mk('https://en.wikipedia.org/wiki/Cell_(biology)', 0, 340)
+  const dna = mk('https://en.wikipedia.org/wiki/DNA', 950, -120)
+  const mito = mk('https://en.wikipedia.org/wiki/Mitochondrion', 950, 800)
+  const crispr = mk('https://en.wikipedia.org/wiki/CRISPR_gene_editing', 1900, -280)
+  const evo = mk('https://en.wikipedia.org/wiki/Evolution', 1900, 360)
+  const photo = mk('https://en.wikipedia.org/wiki/Photosynthesis', 1900, 1000)
+  addEdge(cell.id, dna.id)
+  addEdge(cell.id, mito.id)
+  addEdge(dna.id, crispr.id)
+  addEdge(dna.id, evo.id)
+  addEdge(mito.id, photo.id)
+  createZone({ x: -120, y: -400, w: 2940, h: 2090, name: 'Biology', color: '#6ee7a0' })
+  setActive(dna.id)
+
+  // Hold the view above the live threshold so every page loads and paints.
+  const all = [cell, dna, mito, crispr, evo, photo]
+  const bbLoad = contentBBox()
+  V.s = 0.45
+  V.ox = innerWidth / 2 - (bbLoad.x + bbLoad.w / 2) * V.s
+  V.oy = TOOLBAR + (innerHeight - TOOLBAR) / 2 - (bbLoad.y + bbLoad.h / 2) * V.s
+  scheduleLayout()
+  const t0 = Date.now()
+  while (Date.now() - t0 < 30000) {
+    if (all.every(x => x.everLoaded)) break
+    await sleep(300)
+  }
+  await sleep(2000)
+  for (const x of all) await takeSnapshot(x, true)
+
+  // Wait for the photo backdrop so the shot has the full look.
+  const b0 = Date.now()
+  while (Date.now() - b0 < 8000 && !document.body.classList.contains('bgready')) await sleep(200)
+
+  // Frame the constellation below the live threshold so thumbnails render.
+  const bb = contentBBox()
+  const s = Math.min(0.36, (innerWidth - 220) / bb.w)
+  animateView({
+    s,
+    ox: innerWidth / 2 - (bb.x + bb.w / 2) * s,
+    oy: TOOLBAR + (innerHeight - TOOLBAR) / 2 - (bb.y + bb.h / 2) * s
+  }, 250)
+  await sleep(1500)
+  toastEl.classList.remove('show')
+  await sleep(400)
+  await drift.selftestDone({ errors: [], promo: true, cards: all.map(x => ({ url: x.url, loaded: x.everLoaded })) })
+}
+
 // ---------- boot ----------
 
 async function init() {
   wireGlobalInput()
-  if (!SELF) {
+  initBackdrop()
+  if (!HEADLESS) {
     const st = await drift.loadState()
-    if (st && Array.isArray(st.cards) && st.cards.length) restore(st)
+    // Zones count as content too — a canvas of empty zones must survive a relaunch.
+    const hasContent = st && ((Array.isArray(st.cards) && st.cards.length) ||
+                              (Array.isArray(st.zones) && st.zones.length))
+    if (hasContent) restore(st)
     else firstRun()
+    // First time in Drift (even with an inherited canvas): run the walkthrough.
+    let tourDone = false
+    try { tourDone = !!localStorage.getItem('drift-tour-done') } catch {}
+    if (!tourDone) setTimeout(startTour, 700)
+    try {
+      const b = await drift.bookmarksLoad()
+      bookmarks = (Array.isArray(b) ? b : []).filter(x => x && typeof x.url === 'string')
+    } catch {}
   }
+  refreshBookmarkUI()
   updateEmpty()
   scheduleLayout()
 
+  // Refresh thumbnails one card at a time — capturing every live page in one
+  // tick causes a visible hitch while browsing.
+  let snapRR = 0
   setInterval(() => {
-    for (const c of cards.values()) if (c.live) takeSnapshot(c)
-  }, 20000)
+    const live = [...cards.values()].filter(c => c.live)
+    if (live.length) takeSnapshot(live[snapRR++ % live.length])
+  }, 8000)
 
   setInterval(() => {
-    if (dirty && !SELF) { dirty = false; drift.saveState(serialize()) }
+    if (dirty && !HEADLESS) {
+      dirty = false
+      drift.saveState(serialize())
+    }
   }, 2500)
   window.addEventListener('blur', () => {
-    if (dirty && !SELF) { dirty = false; drift.saveState(serialize()) }
+    if (dirty && !HEADLESS) {
+      dirty = false
+      drift.saveState(serialize())
+    }
   })
 
   if (SELF) runSelftest()
+  if (PROMO) runPromoshot()
 }
 
 init()

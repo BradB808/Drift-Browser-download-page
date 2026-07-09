@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld('drift', {
   snapshot: (id, width) => ipcRenderer.invoke('view:snapshot', { id, width }),
   saveState: (json) => ipcRenderer.invoke('state:save', json),
   loadState: () => ipcRenderer.invoke('state:load'),
+  bookmarksLoad: () => ipcRenderer.invoke('bookmarks:load'),
+  bookmarksSave: (arr) => ipcRenderer.invoke('bookmarks:save', arr),
   selftestArtifact: (name, dataUrl) => ipcRenderer.invoke('selftest:artifact', { name, dataUrl }),
   selftestDone: (report) => ipcRenderer.invoke('selftest:done', report),
   onViewEvent: (fn) => ipcRenderer.on('view:event', (_e, d) => fn(d)),

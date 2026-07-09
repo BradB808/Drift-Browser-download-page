@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Drift — the browser that thinks in maps</title>
+<meta name="description" content="Drift is a spatial web browser. No tabs — your pages live as connected cards on an infinite canvas. Free for macOS and Windows.">
+<meta property="og:title" content="Drift — the browser that thinks in maps">
+<meta property="og:description" content="No tabs. Pages are cards on an infinite canvas, connected by trails. Free for macOS and Windows.">
+<meta property="og:image" content="assets/promo.png">
+<link rel="icon" href="assets/icon.png">
+<style>
+  :root {
+    --bg: #0d0b10;
+    --panel: rgba(26, 21, 32, 0.6);
+    --line: rgba(255, 255, 255, 0.11);
+    --line-soft: rgba(255, 255, 255, 0.07);
+    --text: #f4f1ec;
+    --dim: #a79fb3;
+    --accent: #ffb469;
+    --accent2: #ff6f91;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+  .aurora {
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    background:
+      radial-gradient(1100px 700px at 15% -5%, rgba(94, 58, 128, 0.5) 0%, transparent 60%),
+      radial-gradient(900px 650px at 90% 15%, rgba(158, 62, 92, 0.38) 0%, transparent 55%),
+      radial-gradient(1000px 900px at 50% 110%, rgba(46, 74, 110, 0.45) 0%, transparent 60%),
+      var(--bg);
+  }
+  .aurora::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image: radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+    background-size: 26px 26px;
+  }
+
+  nav {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    gap: 28px;
+    padding: 14px clamp(20px, 5vw, 64px);
+    background: rgba(13, 11, 16, 0.65);
+    backdrop-filter: blur(24px) saturate(1.5);
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; letter-spacing: 0.16em; font-size: 15px; color: #fff; text-decoration: none; }
+  .brand img { height: 26px; }
+  nav .links { margin-left: auto; display: flex; gap: 22px; align-items: center; }
+  nav .links a { color: var(--dim); text-decoration: none; font-size: 14px; transition: color 0.15s; }
+  nav .links a:hover { color: var(--text); }
+  nav .links a.cta {
+    color: #23130d;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    padding: 8px 18px;
+    border-radius: 999px;
+    font-weight: 650;
+  }
+
+  .hero { text-align: center; padding: clamp(60px, 10vw, 110px) 20px 30px; }
+  .hero h1 {
+    font-size: clamp(40px, 6.5vw, 76px);
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    line-height: 1.05;
+    max-width: 900px;
+    margin: 0 auto;
+  }
+  .hero h1 .grad {
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .hero p.sub {
+    margin: 22px auto 0;
+    max-width: 640px;
+    font-size: clamp(16px, 2vw, 20px);
+    line-height: 1.6;
+    color: var(--dim);
+  }
+  .hero .cta-row { margin-top: 36px; display: flex; flex-direction: column; align-items: center; gap: 14px; }
+  .btn-main {
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    color: #23130d;
+    font-weight: 700;
+    font-size: 18px;
+    padding: 16px 34px;
+    border-radius: 999px;
+    text-decoration: none;
+    box-shadow: 0 14px 40px rgba(255, 130, 110, 0.35);
+    transition: transform 0.12s ease, box-shadow 0.2s ease;
+  }
+  .btn-main:hover { transform: translateY(-2px); box-shadow: 0 20px 54px rgba(255, 130, 110, 0.45); }
+  .cta-row .alts { font-size: 13.5px; color: var(--dim); }
+  .cta-row .alts a { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
+  .hero .meta { margin-top: 12px; font-size: 13px; color: var(--dim); }
+
+  .shot { padding: clamp(30px, 5vw, 60px) clamp(16px, 4vw, 60px) 20px; display: flex; flex-direction: column; align-items: center; }
+  .shot .frame {
+    max-width: 1180px;
+    width: 100%;
+    border-radius: 18px;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    box-shadow: 0 40px 140px rgba(0, 0, 0, 0.65), 0 0 120px rgba(255, 140, 110, 0.12);
+  }
+  .shot img { width: 100%; display: block; }
+  .shot .cap { margin-top: 16px; font-size: 13.5px; color: var(--dim); }
+
+  section.features { max-width: 1180px; margin: 0 auto; padding: clamp(50px, 8vw, 90px) 20px; }
+  h2.sec {
+    text-align: center;
+    font-size: clamp(28px, 4vw, 44px);
+    font-weight: 800;
+    letter-spacing: -0.01em;
+    margin-bottom: clamp(30px, 5vw, 56px);
+  }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; }
+  .feat {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    padding: 26px;
+    backdrop-filter: blur(20px);
+  }
+  .feat .ico { font-size: 26px; margin-bottom: 12px; }
+  .feat h3 { font-size: 18px; margin-bottom: 8px; }
+  .feat p { font-size: 14.5px; line-height: 1.65; color: var(--dim); }
+
+  section.download { max-width: 1180px; margin: 0 auto; padding: 20px 20px clamp(60px, 8vw, 100px); }
+  .dl-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px; }
+  .dl {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    padding: 28px;
+    text-align: center;
+    backdrop-filter: blur(20px);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+  }
+  .dl .os { font-size: 34px; }
+  .dl h3 { font-size: 17px; }
+  .dl .sub2 { font-size: 13px; color: var(--dim); }
+  .dl a.get {
+    margin-top: 6px;
+    display: inline-block;
+    padding: 11px 26px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 180, 105, 0.5);
+    color: var(--accent);
+    font-weight: 650;
+    font-size: 14.5px;
+    text-decoration: none;
+    transition: background 0.15s, color 0.15s;
+  }
+  .dl a.get:hover { background: linear-gradient(90deg, var(--accent), var(--accent2)); color: #23130d; border-color: transparent; }
+  .fineprint {
+    max-width: 760px;
+    margin: 26px auto 0;
+    font-size: 12.5px;
+    color: var(--dim);
+    text-align: center;
+    line-height: 1.7;
+  }
+  .fineprint code { background: rgba(255,255,255,0.07); padding: 1px 6px; border-radius: 5px; }
+
+  footer {
+    border-top: 1px solid var(--line-soft);
+    padding: 30px clamp(20px, 5vw, 64px);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    color: var(--dim);
+    font-size: 13px;
+  }
+  footer a { color: var(--text); text-decoration: none; }
+  footer .right { margin-left: auto; }
+</style>
+</head>
+<body>
+<div class="aurora"></div>
+
+<nav>
+  <a class="brand" href="#"><img src="assets/logo.png" alt="Drift logo">DRIFT</a>
+  <div class="links">
+    <a href="#features">Features</a>
+    <a href="https://github.com/BradB808/Drift-Browser-download-page">GitHub</a>
+    <a class="cta" href="#download">Download</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <h1>The browser that<br>thinks in <span class="grad">maps, not tabs</span>.</h1>
+  <p class="sub">Drift throws out the tab bar. Every page is a card on an infinite canvas —
+    links branch into visible trails, research gathers into zones, and your whole
+    session becomes a map you can see, zoom, and rearrange.</p>
+  <div class="cta-row">
+    <a class="btn-main" id="mainBtn" href="#download">↓ Download Drift</a>
+    <div class="alts" id="altLinks"></div>
+    <div class="meta">Free · macOS (Apple Silicon &amp; Intel) · Windows · Your data never leaves your machine</div>
+  </div>
+</div>
+
+<div class="shot">
+  <div class="frame"><img src="assets/promo.png" alt="Drift showing a biology research trail: Cell, DNA, Mitochondria, CRISPR, Evolution and Photosynthesis pages connected on an infinite canvas"></div>
+  <div class="cap">A real session: one biology rabbit hole, visible as a map — every page a live card, every hop a trail.</div>
+</div>
+
+<section class="features" id="features">
+  <h2 class="sec">Browsing, the way your head works</h2>
+  <div class="grid">
+    <div class="feat"><div class="ico">🗺️</div><h3>An infinite canvas</h3>
+      <p>Pan and pinch through your pages like a map. Zoom out and your session becomes a constellation of live thumbnails; dive in and every card is a full Chromium page — logins, video, web apps, everything.</p></div>
+    <div class="feat"><div class="ico">🕸️</div><h3>Trails, not history</h3>
+      <p>Open a link in a new tab and Drift spawns a child card with a visible trail back to where you came from. Draw trails yourself by dragging between cards, and export any trail as a Markdown reading list.</p></div>
+    <div class="feat"><div class="ico">▢</div><h3>Zones keep projects together</h3>
+      <p>Name a region of your canvas — “Trip planning”, “Job hunt”, “Biology” — pick its color, and move the whole thing at once. Zones even grow to fit whatever you put inside.</p></div>
+    <div class="feat"><div class="ico">⛶</div><h3>Focus, split, full screen</h3>
+      <p>Double-click to focus a page, pin two side-by-side to compare, or take one page truly full-screen. <b>Esc</b> always floats you back out to the map.</p></div>
+    <div class="feat"><div class="ico">★</div><h3>Bookmarks &amp; instant search</h3>
+      <p>Star any page and find it again from the bookmarks shelf or the ⌘T palette. ⌘F searches every open card — matches light up right on the canvas.</p></div>
+    <div class="feat"><div class="ico">🔒</div><h3>Private by design</h3>
+      <p>Your canvas, trails, and bookmarks are saved on your machine and nowhere else. No accounts, no sync servers, no browsing log. A fresh photo backdrop greets every launch.</p></div>
+  </div>
+</section>
+
+<section class="download" id="download">
+  <h2 class="sec">Get Drift</h2>
+  <div class="dl-grid">
+    <div class="dl">
+      <div class="os"></div>
+      <h3>macOS — Apple Silicon</h3>
+      <div class="sub2">M1 / M2 / M3 / M4 Macs</div>
+      <a class="get" href="downloads/Drift-mac-arm64.dmg">Download .dmg</a>
+    </div>
+    <div class="dl">
+      <div class="os"></div>
+      <h3>macOS — Intel</h3>
+      <div class="sub2">Intel-based Macs</div>
+      <a class="get" href="downloads/Drift-mac-x64.dmg">Download .dmg</a>
+    </div>
+    <div class="dl">
+      <div class="os">⊞</div>
+      <h3>Windows</h3>
+      <div class="sub2">Windows 10 / 11 · 64-bit</div>
+      <a class="get" href="downloads/Drift-Setup.exe">Download installer</a>
+    </div>
+  </div>
+  <p class="fineprint">
+    Drift is a free, early preview and the builds aren’t code-signed yet.
+    On macOS: right-click the app → <code>Open</code> the first time.
+    On Windows: if SmartScreen appears, choose <code>More info → Run anyway</code>.
+    Every install starts fresh with its own private canvas, bookmarks, and a one-time guided walkthrough.
+  </p>
+</section>
+
+<footer>
+  <span>◍ Drift — a spatial web browser.</span>
+  <a class="right" href="https://github.com/BradB808/Drift-Browser-download-page">Source on GitHub →</a>
+</footer>
+
+<script>
+  // Point the hero button at the visitor's platform.
+  const REL = "downloads/";
+  const ua = navigator.userAgent;
+  const mainBtn = document.getElementById("mainBtn");
+  const alts = document.getElementById("altLinks");
+  if (/Windows/i.test(ua)) {
+    mainBtn.href = REL + "Drift-Setup.exe";
+    mainBtn.textContent = "↓ Download Drift for Windows";
+    alts.innerHTML = 'Also for <a href="' + REL + 'Drift-mac-arm64.dmg">macOS Apple Silicon</a> · <a href="' + REL + 'Drift-mac-x64.dmg">macOS Intel</a>';
+  } else if (/Mac/i.test(ua)) {
+    mainBtn.href = REL + "Drift-mac-arm64.dmg";
+    mainBtn.textContent = "↓ Download Drift for macOS";
+    alts.innerHTML = 'On an Intel Mac? <a href="' + REL + 'Drift-mac-x64.dmg">Download the Intel build</a> · <a href="' + REL + 'Drift-Setup.exe">Windows</a>';
+  } else {
+    alts.innerHTML = '<a href="#download">All downloads ↓</a>';
+  }
+</script>
+</body>
+</html>

@@ -9,7 +9,14 @@
 </head>
 <body>
   <div id="viewport">
+    <div id="bg">
+      <img id="bgimg" alt="">
+      <div id="bgscrim"></div>
+    </div>
+    <div id="grid"></div>
+
     <div id="world">
+      <div id="zones"></div>
       <svg id="edges">
         <g id="edgeG" fill="none" stroke-linecap="round"></g>
       </svg>
@@ -17,11 +24,26 @@
     </div>
 
     <div id="toolbar">
-      <div class="brand">◍ drift</div>
-      <button id="btnNew" title="New card (⌘T)">＋ New card</button>
-      <button id="btnFit" title="Fit everything (⌘0)">Fit</button>
+      <div class="tgroup">
+        <div class="brand"><img id="brandlogo" src="logo.png" alt="">DRIFT</div>
+        <button id="btnNew" title="New card (⌘T) · Find (⌘F)">＋ New card</button>
+        <button id="btnZone" title="New zone (⇧⌘N)">▢ Zone</button>
+        <button id="btnTidy" title="Arrange cards by trail (⇧⌘T)">Tidy</button>
+        <button id="btnFit" title="Fit everything (⌘0)">Fit</button>
+        <button id="btnBookmarks" title="Bookmarks">★</button>
+      </div>
       <div class="tspacer"></div>
-      <div id="zoomPct">100%</div>
+      <div class="tgroup hidden" id="fullExitG">
+        <button id="btnFullUrl" title="Edit address (⌘L)"></button>
+        <button id="btnFullExit">⛶ Exit · esc</button>
+      </div>
+      <div class="tspacer"></div>
+      <div class="tgroup">
+        <button id="btnZoomOut" title="Zoom out (⌘−)">−</button>
+        <button id="btnZoomIn" title="Zoom in (⌘+)">＋</button>
+        <button id="btnHelp" title="Walkthrough">?</button>
+        <div id="zoomPct">100%</div>
+      </div>
     </div>
 
     <div id="empty" class="hidden">
@@ -34,8 +56,33 @@
 
     <div id="palette" class="hidden">
       <div id="palBox" class="no-pan">
-        <input id="palInput" placeholder="Search or enter address…" spellcheck="false" autocomplete="off">
-        <div class="palHint">↵ open here on the canvas · esc cancel</div>
+        <input id="palInput" placeholder="Search your canvas, or enter an address…" spellcheck="false" autocomplete="off">
+        <div id="palResults" class="hidden"></div>
+        <div class="palHint" id="palHint">↵ open on the canvas · ↑↓ jump to a matching card · esc cancel</div>
+      </div>
+    </div>
+
+    <div id="bmpanel" class="hidden no-pan">
+      <div class="bmhead">Bookmarks</div>
+      <div id="bmlist"></div>
+      <div class="bmfoot">click to open · × to remove · ☆ on any card to add</div>
+    </div>
+
+    <div id="ctx" class="hidden no-pan"></div>
+    <div id="toast"></div>
+
+    <div id="tour" class="hidden no-pan">
+      <div id="tourSpot"></div>
+      <div id="tourCard">
+        <div id="tourStepNum"></div>
+        <div id="tourTitle"></div>
+        <div id="tourBody"></div>
+        <div class="tourbtns">
+          <button id="tourSkip">Skip tour</button>
+          <div class="tspacer"></div>
+          <button id="tourBack" class="hidden">‹ Back</button>
+          <button id="tourNext">Next ›</button>
+        </div>
       </div>
     </div>
   </div>

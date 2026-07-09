@@ -1,14 +1,65 @@
 {
   "name": "drift-browser",
   "productName": "Drift",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "description": "A spatial web browser — no tabs, just an infinite canvas of connected pages.",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "selftest": "electron . --selftest"
+    "selftest": "electron . --selftest",
+    "promoshot": "electron . --promoshot",
+    "dist": "electron-builder --mac --win"
   },
   "devDependencies": {
-    "electron": "^33.0.0"
+    "electron": "^33.0.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.bradb808.drift",
+    "productName": "Drift",
+    "toolsets": {
+      "nsis": "1.2.1"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*"
+    ],
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.icns",
+      "identity": null,
+      "category": "public.app-category.productivity",
+      "artifactName": "Drift-mac-${arch}.${ext}"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "artifactName": "Drift-Setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "deleteAppDataOnUninstall": false
+    }
   }
 }

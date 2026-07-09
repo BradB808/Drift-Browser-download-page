@@ -8,9 +8,11 @@ const path = require('path')
 const fs = require('fs')
 
 const SELFTEST = process.argv.includes('--selftest')
+const PROMO = process.argv.includes('--promoshot') // staged canvas for marketing shots
 
-// Keep selftest runs out of the real profile so Brad's canvas is never touched.
-if (SELFTEST) {
+// Keep selftest/promo runs out of the real profile so the user's canvas is
+// never touched.
+if (SELFTEST || PROMO) {
   app.setPath('userData', path.join(app.getPath('temp'), 'drift-selftest-profile'))
 }
 
@@ -143,7 +145,12 @@ ipcMain.on('view:layout', (_e, { zoom, items }) => {
       width: Math.max(1, Math.round(it.w)),
       height: Math.max(1, Math.round(it.h))
     })
-    if (m.zoom !== z) { m.view.webContents.setZoomFactor(z); m.zoom = z }
+    // Content zoom must track the scaled bounds every frame, or pages look
+    // mis-scaled mid-animation (focus in/out, pinch).
+    if (m.zoom === null || Math.abs(m.zoom - z) > 0.001) {
+      m.view.webContents.setZoomFactor(z)
+      m.zoom = z
+    }
   }
   for (const [id, m] of views) {
     if (!seen.has(id) && m.attached) {
@@ -170,13 +177,45 @@ ipcMain.handle('view:snapshot', async (_e, { id, width }) => {
   } catch { return null }
 })
 
+// State payloads carry thumbnail images and can reach several MB; a sync
+// write here stalls the main process and shows up as scroll jank. Write
+// async, coalescing to the latest payload if saves arrive faster than disk.
+let savingState = false
+let pendingState = null
 ipcMain.handle('state:save', (_e, json) => {
-  if (SELFTEST) return
-  try { fs.writeFileSync(stateFile(), JSON.stringify(json)) } catch {}
+  if (SELFTEST || PROMO) return
+  pendingState = json
+  if (savingState) return
+  savingState = true
+  ;(async () => {
+    while (pendingState) {
+      const data = pendingState
+      pendingState = null
+      try { await fs.promises.writeFile(stateFile(), JSON.stringify(data)) } catch {}
+    }
+    savingState = false
+  })()
 })
 
 ipcMain.handle('state:load', () => {
   try { return JSON.parse(fs.readFileSync(stateFile(), 'utf8')) } catch { return null }
+})
+
+// ---------- bookmarks ----------
+// Stored in their own file so they survive independently of the canvas state.
+
+const bookmarksFile = () => path.join(app.getPath('userData'), 'drift-bookmarks.json')
+
+ipcMain.handle('bookmarks:load', () => {
+  try {
+    const a = JSON.parse(fs.readFileSync(bookmarksFile(), 'utf8'))
+    return Array.isArray(a) ? a : []
+  } catch { return [] }
+})
+
+ipcMain.handle('bookmarks:save', (_e, arr) => {
+  if (!Array.isArray(arr)) return
+  try { fs.writeFileSync(bookmarksFile(), JSON.stringify(arr.slice(0, 500))) } catch {}
 })
 
 // ---------- Selftest plumbing ----------
@@ -218,6 +257,8 @@ function buildMenu() {
       label: 'File',
       submenu: [
         { label: 'New Card', accelerator: 'CmdOrCtrl+T', click: key('newcard') },
+        { label: 'New Zone', accelerator: 'Shift+CmdOrCtrl+N', click: key('newzone') },
+        { label: 'Reopen Closed Card', click: key('reopen') },
         { label: 'Close Card', accelerator: 'CmdOrCtrl+W', click: key('closecard') },
         { type: 'separator' },
         { label: 'Close Window', accelerator: 'CmdOrCtrl+Shift+W', role: 'close' }
@@ -229,6 +270,10 @@ function buildMenu() {
       submenu: [
         { label: 'Edit Address', accelerator: 'CmdOrCtrl+L', click: key('address') },
         { label: 'Reload Page', accelerator: 'CmdOrCtrl+R', click: key('reloadcard') },
+        { type: 'separator' },
+        { label: 'Find on Canvas', accelerator: 'CmdOrCtrl+F', click: key('search') },
+        { label: 'Tidy Canvas', accelerator: 'Shift+CmdOrCtrl+T', click: key('tidy') },
+        { label: 'Show Walkthrough', click: key('tour') },
         { type: 'separator' },
         { label: 'Fit Canvas', accelerator: 'CmdOrCtrl+0', click: key('fit') },
         { label: 'Zoom In', accelerator: 'CmdOrCtrl+=', click: key('zoomin') },
@@ -259,7 +304,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js')
     }
   })
-  win.loadFile('renderer/index.html', { query: SELFTEST ? { selftest: '1' } : {} })
+  win.loadFile('renderer/index.html', { query: SELFTEST ? { selftest: '1' } : PROMO ? { promo: '1' } : {} })
   win.on('closed', () => { win = null })
 }
 
@@ -273,6 +318,9 @@ app.on('web-contents-created', (_e, wc) => {
 })
 
 app.whenReady().then(() => {
+  // The time-machine history log was removed in v0.2.1 — clear any file a
+  // previous build left behind.
+  fs.promises.rm(path.join(app.getPath('userData'), 'drift-history.json'), { force: true }).catch(() => {})
   buildMenu()
   createWindow()
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })
