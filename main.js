@@ -3,7 +3,7 @@
 // per canvas card. The renderer is the canvas UI; it tells us where each live
 // page should sit on screen and at what zoom, and we position the native views.
 
-const { app, BrowserWindow, WebContentsView, ipcMain, Menu, shell } = require('electron')
+const { app, BrowserWindow, WebContentsView, ipcMain, Menu, shell, dialog } = require('electron')
 const path = require('path')
 const fs = require('fs')
 
@@ -213,15 +213,89 @@ ipcMain.handle('state:load', () => {
 const bookmarksFile = () => path.join(app.getPath('userData'), 'drift-bookmarks.json')
 
 ipcMain.handle('bookmarks:load', () => {
-  try {
-    const a = JSON.parse(fs.readFileSync(bookmarksFile(), 'utf8'))
-    return Array.isArray(a) ? a : []
-  } catch { return [] }
+  try { return JSON.parse(fs.readFileSync(bookmarksFile(), 'utf8')) } catch { return null }
 })
 
-ipcMain.handle('bookmarks:save', (_e, arr) => {
-  if (!Array.isArray(arr)) return
-  try { fs.writeFileSync(bookmarksFile(), JSON.stringify(arr.slice(0, 500))) } catch {}
+ipcMain.handle('bookmarks:save', (_e, data) => {
+  if (SELFTEST || PROMO) return
+  if (data == null || typeof data !== 'object') return
+  try { fs.writeFileSync(bookmarksFile(), JSON.stringify(data)) } catch {}
+})
+
+// Export/import bookmarks as a standard Netscape HTML file (the format every
+// browser reads and writes). The renderer builds/parses the HTML; main only
+// runs the save/open dialog and touches the file.
+ipcMain.handle('bookmarks:export', async (_e, html) => {
+  if (typeof html !== 'string') return { ok: false }
+  const { canceled, filePath } = await dialog.showSaveDialog(win, {
+    title: 'Export bookmarks',
+    defaultPath: 'drift-bookmarks.html',
+    filters: [{ name: 'HTML', extensions: ['html'] }]
+  })
+  if (canceled || !filePath) return { ok: false }
+  try { fs.writeFileSync(filePath, html); return { ok: true } } catch { return { ok: false } }
+})
+
+ipcMain.handle('bookmarks:import', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+    title: 'Import bookmarks',
+    properties: ['openFile'],
+    filters: [{ name: 'Bookmark HTML', extensions: ['html', 'htm'] }]
+  })
+  if (canceled || !filePaths || !filePaths[0]) return null
+  try { return fs.readFileSync(filePaths[0], 'utf8') } catch { return null }
+})
+
+// ---------- password vault ----------
+// The renderer does all crypto (Web Crypto): the main process only ever stores
+// an opaque encrypted blob, and never sees a plaintext password.
+
+const vaultFile = () => path.join(app.getPath('userData'), 'drift-vault.json')
+
+ipcMain.handle('vault:load', () => {
+  try { return JSON.parse(fs.readFileSync(vaultFile(), 'utf8')) } catch { return null }
+})
+
+ipcMain.handle('vault:save', (_e, blob) => {
+  if (SELFTEST || PROMO) return
+  if (!blob || typeof blob !== 'object') return
+  try { fs.writeFileSync(vaultFile(), JSON.stringify(blob)) } catch {}
+})
+
+// Fill a saved login into a live card's page. Best-effort: fills the first
+// password field and the nearest username/email field before it.
+ipcMain.handle('vault:fill', async (_e, { id, username, password }) => {
+  const m = views.get(id)
+  if (!m || typeof username !== 'string' || typeof password !== 'string') return { ok: false }
+  const script = `(() => {
+    try {
+      const U = ${JSON.stringify(username)}, P = ${JSON.stringify(password)};
+      const set = (el, v) => {
+        const proto = Object.getPrototypeOf(el);
+        const d = Object.getOwnPropertyDescriptor(proto, 'value');
+        d && d.set ? d.set.call(el, v) : (el.value = v);
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      };
+      const pw = document.querySelector('input[type=password]');
+      if (!pw) return 'nopw';
+      set(pw, P);
+      const inputs = [...document.querySelectorAll('input')];
+      const idx = inputs.indexOf(pw);
+      let user = null;
+      for (let i = idx - 1; i >= 0; i--) {
+        const t = (inputs[i].type || '').toLowerCase();
+        if (['text','email','tel','',null].includes(t)) { user = inputs[i]; break; }
+      }
+      if (user) set(user, U);
+      pw.focus();
+      return 'ok';
+    } catch (e) { return 'err:' + e.message; }
+  })()`
+  try {
+    const res = await m.view.webContents.executeJavaScript(script, true)
+    return { ok: res === 'ok', detail: res }
+  } catch (e) { return { ok: false, detail: String(e && e.message) } }
 })
 
 // ---------- update notice ----------

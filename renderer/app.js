@@ -39,8 +39,10 @@ let palHits = []                     // cards matching the palette query
 let palRows = []                     // selectable rows: {type:'card',c} | {type:'bm',b}
 let palRowEls = []
 let palSel = -1                      // -1 = "open as address" row
-let bookmarks = []                   // [{url, title, fav, t}], saved outside canvas state
+let bookmarks = []                   // [{url, title, fav, t, folder}], saved outside canvas state
+let bmFolders = []                   // folder names (kept even when empty)
 let bmSet = new Set()                // urls, for O(1) star state
+let bmCollapsed = new Set()          // folder names collapsed in the panel
 const closedStack = []               // recently closed cards, newest last (max 20)
 let hitSet = new Set()               // ids highlighted on canvas/minimap
 let ctxOpenFor = null
@@ -918,6 +920,7 @@ function doLayout() {
   drawMinimap()
   if (tourOpen) positionTour() // spotlight tracks its target through pans/zooms
   if (bmOpen) positionBmPanel()
+  if (vaultOpen) positionVaultPanel()
   pruneViews()
 }
 
@@ -925,7 +928,7 @@ function decideLiveness() {
   const vw = innerWidth, vh = innerHeight
   // Native page views always sit above the DOM, so any interactive overlay
   // (palette, context menu, tour, bookmarks panel) needs the views detached.
-  const overlay = paletteOpen || tourOpen || bmOpen || !!ctxOpenFor || viewFreeze
+  const overlay = paletteOpen || tourOpen || bmOpen || vaultOpen || !!ctxOpenFor || viewFreeze
   const want = []
   for (const c of cards.values()) {
     const r = screenRect(c)
@@ -1398,6 +1401,7 @@ function wireGlobalInput() {
   window.addEventListener('mousedown', e => {
     if (ctxOpenFor && !e.target.closest('#ctx')) closeCtx()
     if (bmOpen && !e.target.closest('#bmpanel') && !e.target.closest('#btnBookmarks')) closeBmPanel()
+    if (vaultOpen && !e.target.closest('#vaultpanel') && !e.target.closest('#btnVault')) closeVaultPanel()
   }, true)
 
   // Right-click on empty canvas: quick actions for the spot under the cursor.
@@ -1434,6 +1438,13 @@ function wireGlobalInput() {
   $('#btnTidy').addEventListener('click', tidy)
   $('#btnFit').addEventListener('click', fitAll)
   $('#btnBookmarks').addEventListener('click', () => { bmOpen ? closeBmPanel() : openBmPanel() })
+  $('#btnBmFolder').addEventListener('click', addFolder)
+  $('#btnBmImport').addEventListener('click', importBookmarks)
+  $('#btnBmExport').addEventListener('click', exportBookmarks)
+  if (VAULT_ENABLED) {
+    $('#btnVault').classList.remove('hidden')
+    $('#btnVault').addEventListener('click', () => { vaultOpen ? closeVaultPanel() : openVaultPanel() })
+  }
   $('#btnFullExit').addEventListener('click', exitFullscreen)
   $('#btnUpdate').addEventListener('click', () => drift.openDownloadPage())
   $('#btnUpdateDismiss').addEventListener('click', () => $('#updateG').classList.add('hidden'))
@@ -1496,6 +1507,7 @@ function onEscape() {
   if (tourOpen) endTour()
   else if (paletteOpen) closePalette()
   else if (bmOpen) closeBmPanel()
+  else if (vaultOpen) closeVaultPanel()
   else if (fullId) exitFullscreen()
   else if (ctxOpenFor) closeCtx()
   else exitFocus()
@@ -1565,6 +1577,10 @@ function startCardResize(c, e) {
 
 // ---------- bookmarks ----------
 
+function saveBookmarks() {
+  drift.bookmarksSave({ v: 2, folders: bmFolders, items: bookmarks.slice(0, 500) })
+}
+
 function refreshBookmarkUI() {
   bmSet = new Set(bookmarks.map(b => b.url))
   for (const c of cards.values()) renderHead(c)
@@ -1577,13 +1593,133 @@ function toggleBookmark(c) {
   } else {
     // Skip data: favicons — the bookmarks file should stay tiny.
     const fav = (c.fav && /^https?:/i.test(c.fav)) ? c.fav : null
-    bookmarks.unshift({ url: c.url, title: c.title || hostOf(c.url), fav, t: Date.now() })
+    bookmarks.unshift({ url: c.url, title: c.title || hostOf(c.url), fav, t: Date.now(), folder: null })
     if (bookmarks.length > 500) bookmarks.length = 500
     toast('Bookmarked ★ — find it in ⌘T')
   }
-  drift.bookmarksSave(bookmarks)
+  saveBookmarks()
   refreshBookmarkUI()
   if (bmOpen) renderBmPanel()
+}
+
+function addFolder() {
+  // Electron has no window.prompt(); use an inline input in the panel instead.
+  if (!bmOpen) openBmPanel()
+  if (bmList.querySelector('.bmnewfolder')) { bmList.querySelector('.bmnewfolder').focus(); return }
+  const input = document.createElement('input')
+  input.className = 'bmnewfolder'
+  input.placeholder = 'Folder name — ↵ to add'
+  input.spellcheck = false
+  const commit = () => {
+    const name = input.value.trim()
+    input.remove()
+    if (name && !bmFolders.includes(name)) { bmFolders.push(name); saveBookmarks() }
+    renderBmPanel()
+  }
+  input.addEventListener('keydown', e => {
+    e.stopPropagation()
+    if (e.key === 'Enter') commit()
+    else if (e.key === 'Escape') { input.remove() }
+  })
+  input.addEventListener('blur', commit)
+  bmList.insertBefore(input, bmList.firstChild)
+  input.focus()
+}
+
+function moveBookmark(url, folder) {
+  const b = bookmarks.find(x => x.url === url)
+  if (!b) return
+  b.folder = folder || null
+  saveBookmarks()
+  renderBmPanel()
+}
+
+function removeFolder(name) {
+  bmFolders = bmFolders.filter(f => f !== name)
+  for (const b of bookmarks) if (b.folder === name) b.folder = null
+  saveBookmarks()
+  renderBmPanel()
+}
+
+// ---------- bookmark import / export (Netscape HTML) ----------
+
+function bookmarksToHTML() {
+  const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+  const link = (b, indent) => `${indent}<DT><A HREF="${esc(b.url)}"${b.t ? ` ADD_DATE="${Math.floor(b.t / 1000)}"` : ''}>${esc(b.title || b.url)}</A>\n`
+  let s = '<!DOCTYPE NETSCAPE-Bookmark-file-1>\n' +
+    '<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">\n' +
+    '<TITLE>Bookmarks</TITLE>\n<H1>Bookmarks</H1>\n<DL><p>\n'
+  for (const f of bmFolders) {
+    s += `    <DT><H3>${esc(f)}</H3>\n    <DL><p>\n`
+    for (const b of bookmarks.filter(b => b.folder === f)) s += link(b, '        ')
+    s += '    </DL><p>\n'
+  }
+  for (const b of bookmarks.filter(b => !b.folder || !bmFolders.includes(b.folder))) s += link(b, '    ')
+  s += '</DL><p>\n'
+  return s
+}
+
+// Parse a browser bookmark HTML file. Drift folders are one level deep, so
+// nested subfolders are flattened to their own folders (names kept).
+function parseBookmarksHTML(html) {
+  const doc = new DOMParser().parseFromString(html, 'text/html')
+  const items = []
+  const folders = new Set()
+  const topDL = doc.querySelector('dl')
+  if (!topDL) {
+    for (const a of doc.querySelectorAll('a[href]')) {
+      const href = a.getAttribute('href')
+      if (/^https?:/i.test(href)) items.push({ title: a.textContent.trim() || href, url: href, folder: null })
+    }
+    return { items, folders: [] }
+  }
+  const walk = (dl, folder) => {
+    let node = dl.firstElementChild
+    while (node) {
+      if (node.tagName === 'DT') {
+        const h3 = node.querySelector(':scope > h3')
+        const a = node.querySelector(':scope > a')
+        if (h3) {
+          const name = h3.textContent.trim() || folder
+          if (name) folders.add(name)
+          const sub = node.querySelector(':scope > dl') ||
+            (node.nextElementSibling && node.nextElementSibling.tagName === 'DL' ? node.nextElementSibling : null)
+          if (sub) walk(sub, name || folder)
+        } else if (a) {
+          const href = a.getAttribute('href')
+          if (href && /^https?:/i.test(href)) items.push({ title: a.textContent.trim() || href, url: href, folder: folder || null })
+        }
+      }
+      node = node.nextElementSibling
+    }
+  }
+  walk(topDL, null)
+  return { items, folders: [...folders] }
+}
+
+async function exportBookmarks() {
+  if (!bookmarks.length) { toast('No bookmarks to export yet'); return }
+  const res = await drift.bookmarksExport(bookmarksToHTML())
+  if (res && res.ok) toast(`Exported ${bookmarks.length} bookmark${bookmarks.length === 1 ? '' : 's'}`)
+}
+
+async function importBookmarks() {
+  const html = await drift.bookmarksImport()
+  if (!html) return
+  const { items, folders } = parseBookmarksHTML(html)
+  for (const f of folders) if (f && !bmFolders.includes(f)) bmFolders.push(f)
+  let added = 0
+  for (const it of items) {
+    if (bmSet.has(it.url)) continue // don't duplicate what you already have
+    bookmarks.push({ url: it.url, title: it.title || hostOf(it.url), fav: null, t: Date.now(), folder: it.folder || null })
+    bmSet.add(it.url)
+    added++
+  }
+  if (bookmarks.length > 500) bookmarks.length = 500
+  saveBookmarks()
+  refreshBookmarkUI()
+  if (bmOpen) renderBmPanel()
+  toast(added ? `Imported ${added} new bookmark${added === 1 ? '' : 's'}` : 'Nothing new to import')
 }
 
 // ---------- bookmarks panel (toolbar ★) ----------
@@ -1598,36 +1734,95 @@ function positionBmPanel() {
   bmPanel.style.top = (r.bottom + 10) + 'px'
 }
 
+function bmRow(b) {
+  const row = palRowDom('★', b.fav, b.title || b.url, hostOf(b.url), true)
+
+  // Move-to-folder dropdown (only rendered when folders exist).
+  if (bmFolders.length) {
+    const sel = document.createElement('select')
+    sel.className = 'bmmove'
+    sel.title = 'Move to folder'
+    const opt0 = document.createElement('option')
+    opt0.value = ''
+    opt0.textContent = 'Unsorted'
+    sel.appendChild(opt0)
+    for (const f of bmFolders) {
+      const o = document.createElement('option')
+      o.value = f
+      o.textContent = f
+      sel.appendChild(o)
+    }
+    sel.value = b.folder || ''
+    sel.addEventListener('click', ev => ev.stopPropagation())
+    sel.addEventListener('change', ev => { ev.stopPropagation(); moveBookmark(b.url, sel.value) })
+    row.appendChild(sel)
+  }
+
+  const del = document.createElement('button')
+  del.className = 'bmdel'
+  del.title = 'Remove bookmark'
+  del.textContent = '×'
+  del.addEventListener('click', ev => {
+    ev.stopPropagation()
+    bookmarks = bookmarks.filter(x => x.url !== b.url)
+    saveBookmarks()
+    refreshBookmarkUI()
+    renderBmPanel()
+    toast('Bookmark removed')
+  })
+  row.appendChild(del)
+  row.addEventListener('click', () => {
+    closeBmPanel()
+    const c = newCard(b.url)
+    flashCard(c)
+  })
+  return row
+}
+
 function renderBmPanel() {
   bmList.innerHTML = ''
-  if (!bookmarks.length) {
+  if (!bookmarks.length && !bmFolders.length) {
     const d = document.createElement('div')
     d.className = 'bmempty'
     d.textContent = 'No bookmarks yet — hit ☆ on any card.'
     bmList.appendChild(d)
     return
   }
-  for (const b of bookmarks) {
-    const row = palRowDom('★', b.fav, b.title || b.url, hostOf(b.url), true)
-    const del = document.createElement('button')
-    del.className = 'bmdel'
-    del.title = 'Remove bookmark'
-    del.textContent = '×'
-    del.addEventListener('click', ev => {
-      ev.stopPropagation()
-      bookmarks = bookmarks.filter(x => x.url !== b.url)
-      drift.bookmarksSave(bookmarks)
-      refreshBookmarkUI()
+
+  const groupEl = (name, items, removable) => {
+    const collapsed = bmCollapsed.has(name)
+    const head = document.createElement('div')
+    head.className = 'bmgroup'
+    const tw = document.createElement('span')
+    tw.className = 'bmtwist'
+    tw.textContent = collapsed ? '▸' : '▾'
+    const lbl = document.createElement('span')
+    lbl.className = 'bmglabel'
+    lbl.textContent = `${name}  ·  ${items.length}`
+    head.append(tw, lbl)
+    if (removable) {
+      const rm = document.createElement('button')
+      rm.className = 'bmfdel'
+      rm.title = 'Delete folder (bookmarks move to Unsorted)'
+      rm.textContent = '×'
+      rm.addEventListener('click', ev => { ev.stopPropagation(); removeFolder(name) })
+      head.appendChild(rm)
+    }
+    head.addEventListener('click', () => {
+      collapsed ? bmCollapsed.delete(name) : bmCollapsed.add(name)
       renderBmPanel()
-      toast('Bookmark removed')
     })
-    row.appendChild(del)
-    row.addEventListener('click', () => {
-      closeBmPanel()
-      const c = newCard(b.url)
-      flashCard(c)
-    })
-    bmList.appendChild(row)
+    bmList.appendChild(head)
+    if (!collapsed) for (const b of items) bmList.appendChild(bmRow(b))
+  }
+
+  // Named folders first (in order), then anything unsorted.
+  for (const f of bmFolders) groupEl(f, bookmarks.filter(b => b.folder === f), true)
+  const unsorted = bookmarks.filter(b => !b.folder || !bmFolders.includes(b.folder))
+  if (bmFolders.length) {
+    if (unsorted.length) groupEl('Unsorted', unsorted, false)
+  } else {
+    for (const b of unsorted) bmList.appendChild(bmRow(b))
   }
 }
 
@@ -1645,6 +1840,262 @@ function closeBmPanel() {
   if (!bmOpen) return
   bmPanel.classList.add('hidden')
   bmOpen = false
+  scheduleLayout()
+}
+
+// ---------- password vault ----------
+// A local, encrypted credential store. The master password is never saved;
+// it derives (PBKDF2) an AES-GCM key that encrypts the vault at rest. The key
+// lives only in memory for the session and is cleared on lock. Each entry is
+// bound to a site origin, so autofill is only offered on the matching site.
+
+// The vault is fully built and tested but stays hidden until it's hardened for
+// real-world use. Flip this to true (the toolbar button unhides) to re-enable.
+const VAULT_ENABLED = false
+const VAULT_ITER = 310000
+let vaultBlob = null        // { v, salt, iter, iv, ct } persisted, or null if not set up
+let vaultKey = null         // CryptoKey while unlocked, else null
+let vaultEntries = []       // decrypted entries while unlocked: {id,label,origin,url,username,password,t}
+let vaultOpen = false
+
+const te = new TextEncoder(), td = new TextDecoder()
+const toB64 = u => btoa(String.fromCharCode(...new Uint8Array(u)))
+const fromB64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0))
+
+function originOf(url) {
+  try { return new URL(url).origin } catch { return '' }
+}
+
+async function vaultDeriveKey(password, salt) {
+  const base = await crypto.subtle.importKey('raw', te.encode(password), 'PBKDF2', false, ['deriveKey'])
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: VAULT_ITER, hash: 'SHA-256' },
+    base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt'])
+}
+
+async function vaultEncrypt() {
+  const iv = crypto.getRandomValues(new Uint8Array(12))
+  const data = te.encode(JSON.stringify({ entries: vaultEntries }))
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, vaultKey, data)
+  vaultBlob = { ...vaultBlob, iv: toB64(iv), ct: toB64(ct) }
+  drift.vaultSave(vaultBlob)
+}
+
+async function vaultLoadState() {
+  vaultBlob = await drift.vaultLoad()
+}
+
+async function vaultSetup(password) {
+  const salt = crypto.getRandomValues(new Uint8Array(16))
+  vaultKey = await vaultDeriveKey(password, salt)
+  vaultBlob = { v: 1, salt: toB64(salt), iter: VAULT_ITER }
+  vaultEntries = []
+  await vaultEncrypt()
+}
+
+async function vaultUnlock(password) {
+  if (!vaultBlob) return false
+  try {
+    const key = await vaultDeriveKey(password, fromB64(vaultBlob.salt))
+    const pt = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: fromB64(vaultBlob.iv) }, key, fromB64(vaultBlob.ct))
+    const obj = JSON.parse(td.decode(pt))
+    vaultKey = key
+    vaultEntries = Array.isArray(obj.entries) ? obj.entries : []
+    return true
+  } catch { return false } // wrong password (or corrupt blob)
+}
+
+function vaultLock() {
+  vaultKey = null
+  vaultEntries = []
+}
+
+async function vaultAddEntry(e) {
+  vaultEntries.unshift({
+    id: uid('v'),
+    label: e.label || hostOf(e.url) || e.origin,
+    origin: e.origin || originOf(e.url),
+    url: e.url || '',
+    username: e.username || '',
+    password: e.password || '',
+    t: Date.now()
+  })
+  await vaultEncrypt()
+}
+
+async function vaultDeleteEntry(id) {
+  vaultEntries = vaultEntries.filter(x => x.id !== id)
+  await vaultEncrypt()
+}
+
+// ---------- vault panel (toolbar 🔒) ----------
+
+const vaultPanel = () => $('#vaultpanel')
+
+function positionVaultPanel() {
+  const p = vaultPanel()
+  const r = $('#btnVault').getBoundingClientRect()
+  const w = p.offsetWidth
+  p.style.left = clamp(r.right - w, 8, innerWidth - w - 8) + 'px'
+  p.style.top = (r.bottom + 10) + 'px'
+}
+
+function vEl(tag, cls, text) {
+  const e = document.createElement(tag)
+  if (cls) e.className = cls
+  if (text != null) e.textContent = text
+  return e
+}
+
+function renderVaultPanel() {
+  const p = vaultPanel()
+  p.innerHTML = ''
+  p.appendChild(vEl('div', 'vhead', 'Vault'))
+  const body = vEl('div', 'vbody')
+  p.appendChild(body)
+
+  if (!vaultBlob) {
+    // First run: create a master password.
+    body.appendChild(vEl('div', 'vnote', 'Create a master password. It encrypts every saved login and is never stored — if you forget it, the vault can’t be recovered.'))
+    const pw = vEl('input', 'vinput'); pw.type = 'password'; pw.placeholder = 'Master password'
+    const pw2 = vEl('input', 'vinput'); pw2.type = 'password'; pw2.placeholder = 'Confirm password'
+    const err = vEl('div', 'verr')
+    const btn = vEl('button', 'vbtn primary', 'Create vault')
+    const submit = async () => {
+      err.textContent = ''
+      if (pw.value.length < 6) { err.textContent = 'Use at least 6 characters.'; return }
+      if (pw.value !== pw2.value) { err.textContent = 'Passwords don’t match.'; return }
+      await vaultSetup(pw.value)
+      renderVaultPanel()
+      toast('Vault created')
+    }
+    btn.addEventListener('click', submit)
+    pw2.addEventListener('keydown', e => { if (e.key === 'Enter') submit() })
+    body.append(pw, pw2, err, btn)
+    setTimeout(() => pw.focus(), 60)
+    return
+  }
+
+  if (!vaultKey) {
+    // Locked: ask for the master password.
+    body.appendChild(vEl('div', 'vnote', 'Vault is locked.'))
+    const pw = vEl('input', 'vinput'); pw.type = 'password'; pw.placeholder = 'Master password'
+    const err = vEl('div', 'verr')
+    const btn = vEl('button', 'vbtn primary', 'Unlock')
+    const submit = async () => {
+      err.textContent = ''
+      btn.disabled = true
+      const ok = await vaultUnlock(pw.value)
+      btn.disabled = false
+      if (ok) { renderVaultPanel() } else { err.textContent = 'Wrong password.'; pw.select() }
+    }
+    btn.addEventListener('click', submit)
+    pw.addEventListener('keydown', e => { if (e.key === 'Enter') submit() })
+    body.append(pw, err, btn)
+    setTimeout(() => pw.focus(), 60)
+    return
+  }
+
+  // Unlocked.
+  const bar = vEl('div', 'vbar')
+  const add = vEl('button', 'vbtn', '+ Add login')
+  add.addEventListener('click', () => showVaultAddForm(body))
+  const lock = vEl('button', 'vbtn', 'Lock')
+  lock.addEventListener('click', () => { vaultLock(); renderVaultPanel() })
+  bar.append(add, lock)
+  body.appendChild(bar)
+
+  const activeOrigin = activeId && cards.get(activeId) ? originOf(cards.get(activeId).url) : ''
+  const list = vEl('div', 'vlist')
+  body.appendChild(list)
+  if (!vaultEntries.length) {
+    list.appendChild(vEl('div', 'vempty', 'No logins saved yet.'))
+  }
+  for (const e of vaultEntries) {
+    const row = vEl('div', 'vrow')
+    const main = vEl('div', 'vmain')
+    main.appendChild(vEl('div', 'vlabel', e.label))
+    const sub = vEl('div', 'vsub')
+    sub.textContent = e.username || '—'
+    main.appendChild(sub)
+    row.appendChild(main)
+
+    const acts = vEl('div', 'vacts')
+    const reveal = vEl('button', 'vmini', '👁')
+    reveal.title = 'Show password'
+    reveal.addEventListener('click', () => {
+      const shown = sub.dataset.shown === '1'
+      sub.dataset.shown = shown ? '0' : '1'
+      sub.textContent = shown ? (e.username || '—') : e.password
+    })
+    const copy = vEl('button', 'vmini', '⧉')
+    copy.title = 'Copy password'
+    copy.addEventListener('click', () => { copyText(e.password); toast('Password copied') })
+    acts.append(reveal, copy)
+
+    if (activeOrigin && e.origin === activeOrigin) {
+      const fill = vEl('button', 'vmini fill', '↥')
+      fill.title = 'Fill on this page'
+      fill.addEventListener('click', async () => {
+        const res = await drift.vaultFill(activeId, e.username, e.password)
+        toast(res && res.ok ? 'Filled login' : 'Couldn’t find a login form here')
+      })
+      acts.appendChild(fill)
+    }
+
+    const del = vEl('button', 'vmini danger', '×')
+    del.title = 'Delete login'
+    del.addEventListener('click', async () => { await vaultDeleteEntry(e.id); renderVaultPanel() })
+    acts.appendChild(del)
+    row.appendChild(acts)
+    list.appendChild(row)
+  }
+  positionVaultPanel()
+}
+
+function showVaultAddForm(body) {
+  const c = activeId && cards.get(activeId)
+  const form = vEl('div', 'vform')
+  const site = vEl('input', 'vinput'); site.placeholder = 'Site (e.g. github.com)'
+  site.value = c ? hostOf(c.url) : ''
+  const user = vEl('input', 'vinput'); user.placeholder = 'Username or email'
+  const pass = vEl('input', 'vinput'); pass.type = 'password'; pass.placeholder = 'Password'
+  const row = vEl('div', 'vformbtns')
+  const save = vEl('button', 'vbtn primary', 'Save')
+  const cancel = vEl('button', 'vbtn', 'Cancel')
+  save.addEventListener('click', async () => {
+    if (!pass.value) { pass.focus(); return }
+    // Prefer the active card's exact origin when the site field matches it.
+    let url = ''
+    if (c && hostOf(c.url) === site.value.trim()) url = c.url
+    else if (site.value.trim()) url = 'https://' + site.value.trim().replace(/^https?:\/\//, '')
+    await vaultAddEntry({ label: site.value.trim() || hostOf(url), url, origin: originOf(url), username: user.value, password: pass.value })
+    renderVaultPanel()
+    toast('Login saved')
+  })
+  cancel.addEventListener('click', renderVaultPanel)
+  row.append(save, cancel)
+  form.append(site, user, pass, row)
+  body.insertBefore(form, body.querySelector('.vlist'))
+  setTimeout(() => user.focus(), 40)
+}
+
+function openVaultPanel() {
+  closeCtx()
+  if (paletteOpen) closePalette()
+  if (bmOpen) closeBmPanel()
+  vaultOpen = true
+  vaultPanel().classList.remove('hidden')
+  renderVaultPanel()
+  positionVaultPanel()
+  scheduleLayout()
+}
+
+function closeVaultPanel() {
+  if (!vaultOpen) return
+  vaultOpen = false
+  vaultPanel().classList.add('hidden')
   scheduleLayout()
 }
 
@@ -2150,6 +2601,30 @@ async function runSelftest() {
     if (!bmList.querySelectorAll('.palrow').length) report.errors.push('bookmarks panel shows no rows')
     closeBmPanel()
 
+    // bookmark folders
+    bmFolders = ['Research']
+    moveBookmark(bmCard.url, 'Research')
+    if (bookmarks.find(b => b.url === bmCard.url)?.folder !== 'Research') report.errors.push('bookmark not moved into folder')
+
+    // export → parse round trip (own format)
+    const roundtrip = parseBookmarksHTML(bookmarksToHTML())
+    if (!roundtrip.items.find(x => x.url === bmCard.url)) report.errors.push('export/import round trip lost a bookmark')
+    if (!roundtrip.folders.includes('Research')) report.errors.push('export/import round trip lost a folder')
+
+    // parse a Brave/Chrome-style nested export
+    const braveHTML = '<!DOCTYPE NETSCAPE-Bookmark-file-1>\n<DL><p>\n' +
+      '<DT><H3>Bookmarks bar</H3>\n<DL><p>\n' +
+      '<DT><A HREF="https://news.ycombinator.com/">Hacker News</A>\n' +
+      '<DT><H3>Reading</H3>\n<DL><p>\n<DT><A HREF="https://example.org/">Example</A>\n</DL><p>\n' +
+      '</DL><p>\n</DL><p>\n'
+    const braveParsed = parseBookmarksHTML(braveHTML)
+    report.import = { items: braveParsed.items.length, folders: braveParsed.folders.length }
+    if (braveParsed.items.length !== 2) report.errors.push('Brave-style import parsed wrong item count: ' + braveParsed.items.length)
+    if (!braveParsed.folders.includes('Reading')) report.errors.push('Brave-style import lost a nested folder')
+
+    removeFolder('Research')
+    if (bookmarks.find(b => b.url === bmCard.url)?.folder) report.errors.push('folder removal did not unsort bookmark')
+
     toggleBookmark(bmCard)
     if (bookmarks.length !== 0) report.errors.push('bookmark not removed')
 
@@ -2165,6 +2640,32 @@ async function runSelftest() {
     autoGrowZones()
     if (growZone.w <= zoneW0) report.errors.push('zone did not auto-grow around an oversized card')
 
+    // ---- password vault (real crypto round trip through the app) ----
+    await vaultSetup('test-master-pw')
+    await vaultAddEntry({ label: 'example.com', url: 'https://example.com/login', origin: 'https://example.com', username: 'brad', password: 's3cret!' })
+    if (vaultEntries.length !== 1) report.errors.push('vault entry not added')
+    vaultLock()
+    if (vaultKey) report.errors.push('vault did not lock')
+    const bad = await vaultUnlock('wrong')
+    if (bad) report.errors.push('vault unlocked with wrong password')
+    const good = await vaultUnlock('test-master-pw')
+    if (!good) report.errors.push('vault did not unlock with correct password')
+    if (vaultEntries[0]?.password !== 's3cret!') report.errors.push('vault did not decrypt saved password')
+    report.vault = { blobHasCipher: !!(vaultBlob && vaultBlob.ct), entries: vaultEntries.length }
+
+    // UI smoke: both panels must render in every state without throwing.
+    await vaultUnlock('test-master-pw')
+    openVaultPanel()
+    if (!vaultPanel().querySelector('.vrow')) report.errors.push('vault panel did not render an unlocked entry row')
+    vaultLock(); renderVaultPanel()
+    if (!vaultPanel().querySelector('.vinput')) report.errors.push('locked vault panel did not render unlock field')
+    closeVaultPanel()
+    bmFolders = ['Research']; toggleBookmark(bmCard); moveBookmark(bmCard.url, 'Research')
+    openBmPanel()
+    if (!bmList.querySelector('.bmgroup')) report.errors.push('bookmarks panel did not render a folder group')
+    closeBmPanel()
+    removeFolder('Research'); toggleBookmark(bmCard); bmFolders = []
+
     startTour()
     if (!tourOpen) report.errors.push('walkthrough did not open')
     for (let i = 0; i < TOUR_STEPS.length + 2 && tourOpen; i++) { nextTour(); await sleep(50) }
@@ -2172,7 +2673,7 @@ async function runSelftest() {
     startTour() // leave it open on the welcome step so the final capture shows it
     await sleep(300)
 
-    report.v2 = { zones: zones.size, searchHits: report.searchHits, tourSteps: TOUR_STEPS.length }
+    report.v2 = { zones: zones.size, searchHits: report.searchHits, tourSteps: TOUR_STEPS.length, folders: true, vault: true }
   } catch (err) {
     report.errors.push(String(err && err.stack || err))
   }
@@ -2272,8 +2773,16 @@ async function init() {
     if (!tourDone) setTimeout(startTour, 700)
     try {
       const b = await drift.bookmarksLoad()
-      bookmarks = (Array.isArray(b) ? b : []).filter(x => x && typeof x.url === 'string')
+      if (Array.isArray(b)) {
+        // v1: a flat array of bookmarks, no folders.
+        bookmarks = b.filter(x => x && typeof x.url === 'string')
+        bmFolders = []
+      } else if (b && typeof b === 'object') {
+        bookmarks = (Array.isArray(b.items) ? b.items : []).filter(x => x && typeof x.url === 'string')
+        bmFolders = (Array.isArray(b.folders) ? b.folders : []).filter(f => typeof f === 'string')
+      }
     } catch {}
+    try { await vaultLoadState() } catch {}
   }
   refreshBookmarkUI()
   updateEmpty()
