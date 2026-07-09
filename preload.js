@@ -14,6 +14,8 @@ contextBridge.exposeInMainWorld('drift', {
   bookmarksSave: (arr) => ipcRenderer.invoke('bookmarks:save', arr),
   selftestArtifact: (name, dataUrl) => ipcRenderer.invoke('selftest:artifact', { name, dataUrl }),
   selftestDone: (report) => ipcRenderer.invoke('selftest:done', report),
+  openDownloadPage: () => ipcRenderer.invoke('update:open'),
   onViewEvent: (fn) => ipcRenderer.on('view:event', (_e, d) => fn(d)),
-  onUIKey: (fn) => ipcRenderer.on('ui:key', (_e, d) => fn(d))
+  onUIKey: (fn) => ipcRenderer.on('ui:key', (_e, d) => fn(d)),
+  onUpdateAvailable: (fn) => ipcRenderer.on('update:available', (_e, d) => fn(d))
 })

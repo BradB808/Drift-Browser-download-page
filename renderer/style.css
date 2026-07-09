@@ -496,6 +496,15 @@ body.nobg #bgimg { display: none; }
 
 #btnFullExit { border-color: var(--accent-dim); color: var(--accent); }
 
+#btnUpdate {
+  border: 0;
+  background: linear-gradient(90deg, var(--accent), var(--accent2));
+  color: #23130d;
+  font-weight: 650;
+}
+#btnUpdate:hover { filter: brightness(1.08); }
+#btnUpdateDismiss { border-color: transparent; color: var(--dim); padding: 0 9px; }
+
 #btnFullUrl {
   max-width: 380px;
   overflow: hidden;

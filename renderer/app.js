@@ -1408,6 +1408,8 @@ function wireGlobalInput() {
   $('#btnFit').addEventListener('click', fitAll)
   $('#btnBookmarks').addEventListener('click', () => { bmOpen ? closeBmPanel() : openBmPanel() })
   $('#btnFullExit').addEventListener('click', exitFullscreen)
+  $('#btnUpdate').addEventListener('click', () => drift.openDownloadPage())
+  $('#btnUpdateDismiss').addEventListener('click', () => $('#updateG').classList.add('hidden'))
   $('#btnFullUrl').addEventListener('click', () => {
     const c = fullId && cards.get(fullId)
     if (c) openPalette({ navigateId: c.id, prefill: c.url })
@@ -1756,6 +1758,11 @@ function jumpToCard(c) {
 }
 
 // ---------- shortcuts from the app menu / page views ----------
+
+drift.onUpdateAvailable(({ version }) => {
+  $('#btnUpdate').textContent = `⬇ Drift ${version} is out — get the update`
+  $('#updateG').classList.remove('hidden')
+})
 
 drift.onUIKey(({ key }) => {
   if (tourOpen && key !== 'escape' && key !== 'tour') return

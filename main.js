@@ -3,7 +3,7 @@
 // per canvas card. The renderer is the canvas UI; it tells us where each live
 // page should sit on screen and at what zoom, and we position the native views.
 
-const { app, BrowserWindow, WebContentsView, ipcMain, Menu } = require('electron')
+const { app, BrowserWindow, WebContentsView, ipcMain, Menu, shell } = require('electron')
 const path = require('path')
 const fs = require('fs')
 
@@ -218,6 +218,43 @@ ipcMain.handle('bookmarks:save', (_e, arr) => {
   try { fs.writeFileSync(bookmarksFile(), JSON.stringify(arr.slice(0, 500))) } catch {}
 })
 
+// ---------- update notice ----------
+// Quiet check against GitHub Releases a few seconds after launch. If a newer
+// version exists, the renderer shows a pill linking to the download page.
+
+const UPDATE_REPO = 'BradB808/Drift-Browser-download-page'
+const DOWNLOAD_PAGE = 'https://driftbrowser.netlify.app/'
+
+function isNewerVersion(a, b) { // a > b, "x.y.z"
+  const pa = String(a).split('.').map(n => parseInt(n, 10) || 0)
+  const pb = String(b).split('.').map(n => parseInt(n, 10) || 0)
+  for (let i = 0; i < 3; i++) {
+    if ((pa[i] || 0) > (pb[i] || 0)) return true
+    if ((pa[i] || 0) < (pb[i] || 0)) return false
+  }
+  return false
+}
+
+function checkForUpdates() {
+  if (SELFTEST || PROMO) return
+  const force = process.env.DRIFT_UPDATE_TEST === '1'
+  setTimeout(async () => {
+    try {
+      const res = await fetch(`https://api.github.com/repos/${UPDATE_REPO}/releases/latest`, {
+        headers: { 'User-Agent': 'drift-browser', Accept: 'application/vnd.github+json' }
+      })
+      if (!res.ok) return
+      const rel = await res.json()
+      const latest = String(rel.tag_name || '').replace(/^v/, '')
+      if (force || (latest && isNewerVersion(latest, app.getVersion()))) {
+        sendUI('update:available', { version: latest || app.getVersion() })
+      }
+    } catch {} // offline is fine — try again next launch
+  }, force ? 1500 : 6000)
+}
+
+ipcMain.handle('update:open', () => shell.openExternal(DOWNLOAD_PAGE))
+
 // ---------- Selftest plumbing ----------
 
 const selftestDir = process.env.DRIFT_SELFTEST_DIR || path.join(app.getPath('temp'), 'drift-selftest')
@@ -323,6 +360,7 @@ app.whenReady().then(() => {
   fs.promises.rm(path.join(app.getPath('userData'), 'drift-history.json'), { force: true }).catch(() => {})
   buildMenu()
   createWindow()
+  checkForUpdates()
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })
 })
 
