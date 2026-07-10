@@ -3,6 +3,7 @@
   "productName": "Drift",
   "version": "0.2.4",
   "description": "A spatial web browser — no tabs, just an infinite canvas of connected pages.",
+  "license": "GPL-3.0",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -11,7 +12,7 @@
     "dist": "electron-builder --mac --win"
   },
   "devDependencies": {
-    "electron": "^33.0.0",
+    "electron": "^37.0.0",
     "electron-builder": "^26.15.3"
   },
   "build": {
@@ -24,7 +25,12 @@
     "files": [
       "main.js",
       "preload.js",
-      "renderer/**/*"
+      "renderer/**/*",
+      "node_modules/**/*"
+    ],
+    "asarUnpack": [
+      "node_modules/electron-chrome-extensions/**",
+      "node_modules/electron-chrome-web-store/**"
     ],
     "directories": {
       "output": "dist",
@@ -62,5 +68,9 @@
       "perMachine": false,
       "deleteAppDataOnUninstall": false
     }
+  },
+  "dependencies": {
+    "electron-chrome-extensions": "^4.9.0",
+    "electron-chrome-web-store": "^0.13.0"
   }
 }

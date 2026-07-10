@@ -502,6 +502,15 @@ body.nobg #bgimg { display: none; }
 
 #btnFullExit { border-color: var(--accent-dim); color: var(--accent); }
 
+/* Extension action icons in the toolbar */
+#toolbar browser-action-list {
+  display: inline-flex;
+  align-items: center;
+  height: 30px;
+  --browser-action-badge-color: #fff;
+  --browser-action-badge-outline: rgba(0, 0, 0, 0.4);
+}
+
 #btnUpdate {
   border: 0;
   background: linear-gradient(90deg, var(--accent), var(--accent2));
@@ -949,6 +958,87 @@ body.nobg #bgimg { display: none; }
 #vaultpanel .vmini.fill { color: var(--accent); }
 #vaultpanel .vmini.fill:hover { background: var(--accent-soft); }
 #vaultpanel .vmini.danger:hover { background: rgba(255, 107, 107, 0.18); color: var(--danger); }
+
+/* ---------- settings panel ---------- */
+
+#setpanel {
+  position: fixed;
+  z-index: 95;
+  width: min(400px, 92vw);
+  max-height: 78vh;
+  overflow-y: auto;
+  background: var(--panel);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 10px;
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+#setpanel::-webkit-scrollbar { width: 6px; }
+#setpanel::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.14); border-radius: 3px; }
+#setpanel .vhead {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 11px; color: var(--dim); letter-spacing: 0.09em;
+  text-transform: uppercase; padding: 4px 8px 8px;
+}
+#setpanel .vhead::before { content: "⚙"; font-size: 12px; }
+#setpanel .setbody { display: flex; flex-direction: column; gap: 8px; }
+#setpanel .setsec {
+  font-size: 11px; color: var(--accent); letter-spacing: 0.09em;
+  text-transform: uppercase; padding: 12px 4px 2px; font-weight: 600;
+}
+#setpanel .setlabel { font-size: 12px; color: var(--dim); padding: 4px 4px 0; }
+#setpanel .setnote { font-size: 12px; color: var(--dim); line-height: 1.55; padding: 2px 4px; }
+#setpanel .setrow { display: flex; gap: 8px; }
+#setpanel .setbtn {
+  flex: 1;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0 12px;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+#setpanel .setbtn:hover { background: rgba(255, 255, 255, 0.1); border-color: var(--accent-dim); }
+#setpanel .setbtn.on { border-color: var(--accent); color: var(--accent); }
+#setpanel .setbtn.small { flex: none; height: 28px; font-size: 12px; }
+#setpanel .setbtn:disabled { opacity: 0.5; cursor: default; }
+
+#setpanel .setpreview { display: flex; align-items: center; gap: 10px; padding: 2px 4px; }
+#setpanel .setpreview img {
+  width: 84px; height: 52px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line);
+}
+
+#setpanel .setswatches { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px; }
+#setpanel .swatch {
+  width: 30px; height: 30px; border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  cursor: pointer; padding: 0;
+}
+#setpanel .swatch.on { outline: 2px solid var(--accent); outline-offset: 2px; }
+#setpanel .customswatch { background: conic-gradient(red, yellow, lime, aqua, blue, magenta, red); }
+
+#setpanel .setextlist { display: flex; flex-direction: column; gap: 4px; margin-top: 2px; }
+#setpanel .setextrow {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; border-radius: 10px; background: rgba(255, 255, 255, 0.04);
+}
+#setpanel .setextmain { flex: 1; min-width: 0; }
+#setpanel .setextname { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#setpanel .setextver { font-size: 11px; color: var(--dim); }
+#setpanel .vmini {
+  width: 26px; height: 26px; border: 0; border-radius: 7px; background: transparent;
+  color: var(--dim); font-size: 14px; cursor: pointer; opacity: 0.7;
+}
+#setpanel .vmini.danger:hover { background: rgba(255, 107, 107, 0.18); color: var(--danger); }
+
+/* Solid-color background mode: hide the photo, scrim, and aurora. */
+body.bg-solid #bgimg { display: none; }
+body.bg-solid #bgscrim { display: none; }
+body.bg-solid #bg::before { display: none; }
 
 /* ---------- context menu ---------- */
 

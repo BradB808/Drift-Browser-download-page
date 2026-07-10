@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; img-src 'self' data: https: http:; style-src 'self' 'unsafe-inline'; script-src 'self'">
+        content="default-src 'self'; img-src 'self' data: https: http: crx: chrome-extension:; style-src 'self' 'unsafe-inline'; script-src 'self'">
   <title>Drift</title>
   <link rel="stylesheet" href="style.css">
 </head>
@@ -48,6 +48,9 @@
       <div class="tgroup">
         <button id="btnZoomOut" title="Zoom out (⌘−)">−</button>
         <button id="btnZoomIn" title="Zoom in (⌘+)">＋</button>
+        <span id="extslot"></span>
+        <button id="btnExt" title="Get extensions from the Chrome Web Store">🧩</button>
+        <button id="btnSettings" title="Settings">⚙</button>
         <button id="btnHelp" title="Walkthrough">?</button>
         <div id="zoomPct">100%</div>
       </div>
@@ -83,6 +86,7 @@
     </div>
 
     <div id="vaultpanel" class="hidden no-pan"></div>
+    <div id="setpanel" class="hidden no-pan"></div>
 
     <div id="ctx" class="hidden no-pan"></div>
     <div id="toast"></div>

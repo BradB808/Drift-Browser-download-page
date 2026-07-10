@@ -49,6 +49,8 @@ let ctxOpenFor = null
 let tourOpen = false
 let tourIdx = 0
 let bmOpen = false
+let settingsOpen = false
+let settings = { bg: { mode: 'photos' } } // loaded from disk at boot
 let dirty = false
 let layoutQueued = false
 let animToken = 0
@@ -921,6 +923,7 @@ function doLayout() {
   if (tourOpen) positionTour() // spotlight tracks its target through pans/zooms
   if (bmOpen) positionBmPanel()
   if (vaultOpen) positionVaultPanel()
+  if (settingsOpen) positionSettingsPanel()
   pruneViews()
 }
 
@@ -928,7 +931,7 @@ function decideLiveness() {
   const vw = innerWidth, vh = innerHeight
   // Native page views always sit above the DOM, so any interactive overlay
   // (palette, context menu, tour, bookmarks panel) needs the views detached.
-  const overlay = paletteOpen || tourOpen || bmOpen || vaultOpen || !!ctxOpenFor || viewFreeze
+  const overlay = paletteOpen || tourOpen || bmOpen || vaultOpen || settingsOpen || !!ctxOpenFor || viewFreeze
   const want = []
   for (const c of cards.values()) {
     const r = screenRect(c)
@@ -1079,6 +1082,23 @@ function spawnChild(parent, url) {
   setActive(c.id)
   flashCard(c)
   ensureVisible(c)
+  return c
+}
+
+// An extension (or the Web Store) opened a new tab whose native view already
+// exists in main — create a card bound to it without asking for a new view.
+function adoptCard(id, url) {
+  if (cards.has(id)) return cards.get(id)
+  const w = 860, h = 600
+  const p = toWorld(innerWidth / 2, TOOLBAR + (innerHeight - TOOLBAR) / 2)
+  let [x, y] = findFreeSpot(p.x - w / 2, p.y - h / 2, w, h)
+  const c = createCard({ id, url: url || 'about:blank', x, y, w, h })
+  c.viewCreated = true
+  c.viewReady = true
+  setActive(c.id)
+  flashCard(c)
+  ensureVisible(c)
+  scheduleLayout()
   return c
 }
 
@@ -1402,6 +1422,7 @@ function wireGlobalInput() {
     if (ctxOpenFor && !e.target.closest('#ctx')) closeCtx()
     if (bmOpen && !e.target.closest('#bmpanel') && !e.target.closest('#btnBookmarks')) closeBmPanel()
     if (vaultOpen && !e.target.closest('#vaultpanel') && !e.target.closest('#btnVault')) closeVaultPanel()
+    if (settingsOpen && !e.target.closest('#setpanel') && !e.target.closest('#btnSettings')) closeSettingsPanel()
   }, true)
 
   // Right-click on empty canvas: quick actions for the spot under the cursor.
@@ -1442,6 +1463,8 @@ function wireGlobalInput() {
   $('#btnBmImport').addEventListener('click', importBookmarks)
   $('#btnBmExport').addEventListener('click', exportBookmarks)
   $('#btnBmClear').addEventListener('click', clearAllBookmarks)
+  $('#btnSettings').addEventListener('click', () => { settingsOpen ? closeSettingsPanel() : openSettingsPanel() })
+  $('#btnExt').addEventListener('click', () => drift.extOpenStore())
   if (VAULT_ENABLED) {
     $('#btnVault').classList.remove('hidden')
     $('#btnVault').addEventListener('click', () => { vaultOpen ? closeVaultPanel() : openVaultPanel() })
@@ -1509,6 +1532,7 @@ function onEscape() {
   else if (paletteOpen) closePalette()
   else if (bmOpen) closeBmPanel()
   else if (vaultOpen) closeVaultPanel()
+  else if (settingsOpen) closeSettingsPanel()
   else if (fullId) exitFullscreen()
   else if (ctxOpenFor) closeCtx()
   else exitFocus()
@@ -2175,6 +2199,147 @@ function closeVaultPanel() {
   scheduleLayout()
 }
 
+// ---------- settings panel (toolbar ⚙) ----------
+
+const SOLID_COLORS = [
+  { name: 'White', v: '#ffffff' },
+  { name: 'Off-white', v: '#f4f1ec' },
+  { name: 'Light grey', v: '#e7e5ea' },
+  { name: 'Slate', v: '#2b303c' },
+  { name: 'Black', v: '#0d0b10' },
+  { name: 'Navy', v: '#111d33' },
+  { name: 'Forest', v: '#122019' },
+  { name: 'Plum', v: '#1d1526' }
+]
+
+function settingsPanelEl() { return $('#setpanel') }
+
+function positionSettingsPanel() {
+  const p = settingsPanelEl()
+  const r = $('#btnSettings').getBoundingClientRect()
+  const w = p.offsetWidth
+  p.style.left = clamp(r.right - w, 8, innerWidth - w - 8) + 'px'
+  p.style.top = (r.bottom + 10) + 'px'
+}
+
+async function saveSettings() {
+  await drift.settingsSave(settings)
+}
+
+async function setBackground(bg) {
+  settings.bg = bg
+  applyBackground()
+  await saveSettings()
+  renderSettingsPanel()
+}
+
+function pickBackgroundImage() {
+  const inp = document.createElement('input')
+  inp.type = 'file'
+  inp.accept = 'image/*'
+  inp.addEventListener('change', () => {
+    const file = inp.files && inp.files[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => setBackground({ mode: 'image', image: String(reader.result) })
+    reader.readAsDataURL(file)
+  })
+  inp.click()
+}
+
+async function renderSettingsPanel() {
+  const p = settingsPanelEl()
+  p.innerHTML = ''
+  p.appendChild(vEl('div', 'vhead', 'Settings'))
+  const body = vEl('div', 'setbody')
+  p.appendChild(body)
+
+  // ---- Background ----
+  body.appendChild(vEl('div', 'setsec', 'Background'))
+  const mode = (settings.bg && settings.bg.mode) || 'photos'
+  const row = vEl('div', 'setrow')
+  const photosBtn = vEl('button', 'setbtn' + (mode === 'photos' ? ' on' : ''), 'Drift photos')
+  photosBtn.addEventListener('click', () => setBackground({ mode: 'photos' }))
+  const uploadBtn = vEl('button', 'setbtn' + (mode === 'image' ? ' on' : ''), mode === 'image' ? 'Change image' : 'Upload image')
+  uploadBtn.addEventListener('click', pickBackgroundImage)
+  row.append(photosBtn, uploadBtn)
+  body.appendChild(row)
+
+  if (mode === 'image' && settings.bg.image) {
+    const prev = vEl('div', 'setpreview')
+    const im = document.createElement('img')
+    im.src = settings.bg.image
+    prev.appendChild(im)
+    const rm = vEl('button', 'setbtn small', 'Remove image')
+    rm.addEventListener('click', () => setBackground({ mode: 'photos' }))
+    prev.appendChild(rm)
+    body.appendChild(prev)
+  }
+
+  body.appendChild(vEl('div', 'setlabel', 'Solid color'))
+  const sw = vEl('div', 'setswatches')
+  for (const c of SOLID_COLORS) {
+    const s = vEl('button', 'swatch' + (mode === 'color' && settings.bg.color === c.v ? ' on' : ''))
+    s.style.background = c.v
+    s.title = c.name
+    s.addEventListener('click', () => setBackground({ mode: 'color', color: c.v }))
+    sw.appendChild(s)
+  }
+  const custom = document.createElement('input')
+  custom.type = 'color'
+  custom.className = 'swatch customswatch'
+  custom.title = 'Custom color'
+  custom.value = (mode === 'color' && settings.bg.color) || '#1d1526'
+  custom.addEventListener('input', () => setBackground({ mode: 'color', color: custom.value }))
+  sw.appendChild(custom)
+  body.appendChild(sw)
+
+  // ---- Extensions ----
+  body.appendChild(vEl('div', 'setsec', 'Extensions'))
+  body.appendChild(vEl('div', 'setnote',
+    'Install extensions from the Chrome Web Store — they apply to every tab, and their icons appear in the toolbar. Some newer extensions may not fully work yet.'))
+  const store = vEl('button', 'setbtn', '🧩 Browse the Chrome Web Store')
+  store.addEventListener('click', () => { drift.extOpenStore(); closeSettingsPanel() })
+  body.appendChild(store)
+
+  const list = vEl('div', 'setextlist')
+  body.appendChild(list)
+  let exts = []
+  try { exts = await drift.extList() } catch {}
+  if (!exts.length) list.appendChild(vEl('div', 'setnote', 'No extensions installed yet.'))
+  for (const e of exts) {
+    const r2 = vEl('div', 'setextrow')
+    const main = vEl('div', 'setextmain')
+    main.appendChild(vEl('div', 'setextname', e.name || e.id))
+    main.appendChild(vEl('div', 'setextver', 'v' + (e.version || '?')))
+    r2.appendChild(main)
+    const del = vEl('button', 'vmini danger', '×')
+    del.title = 'Remove extension'
+    del.addEventListener('click', async () => { await drift.extRemove(e.id); renderSettingsPanel() })
+    r2.appendChild(del)
+    list.appendChild(r2)
+  }
+  positionSettingsPanel()
+}
+
+function openSettingsPanel() {
+  closeCtx()
+  if (paletteOpen) closePalette()
+  if (bmOpen) closeBmPanel()
+  settingsOpen = true
+  settingsPanelEl().classList.remove('hidden')
+  renderSettingsPanel()
+  positionSettingsPanel()
+  scheduleLayout()
+}
+
+function closeSettingsPanel() {
+  if (!settingsOpen) return
+  settingsOpen = false
+  settingsPanelEl().classList.add('hidden')
+  scheduleLayout()
+}
+
 // ---------- palette (open + search) ----------
 
 function openPalette(mode) {
@@ -2324,6 +2489,15 @@ drift.onUpdateAvailable(({ version }) => {
   $('#updateG').classList.remove('hidden')
 })
 
+// Extension tab lifecycle (chrome.tabs.* and Web Store).
+drift.onExtAdoptTab(({ id, url }) => adoptCard(id, url))
+drift.onExtSelectTab(({ id }) => {
+  const c = cards.get(id)
+  if (c) { setActive(id); drift.raise(id); ensureVisible(c) }
+})
+drift.onExtRemoveTab(({ id }) => { if (cards.has(id)) closeCard(id) })
+drift.onSpawnUrl(({ url }) => { const c = newCard(url); if (c) flashCard(c) })
+
 drift.onUIKey(({ key }) => {
   if (tourOpen && key !== 'escape' && key !== 'tour') return
   switch (key) {
@@ -2362,8 +2536,22 @@ function minimapTransform() {
   return { k, ox: pad + ((W - pad * 2) - (x2 - x1) * k) / 2 - x1 * k, oy: pad + ((H - pad * 2) - (y2 - y1) * k) / 2 - y1 * k }
 }
 
+// The minimap is DOM, but live pages are native views that always paint on
+// top of the DOM — so a page overlapping the minimap corner clips it and looks
+// broken. Hide the minimap whenever a live view (or fullscreen page) covers it.
+function minimapOccluded() {
+  if (fullId && cards.get(fullId)?.viewReady) return true
+  const r = minimap.getBoundingClientRect()
+  for (const c of cards.values()) {
+    if (!c.live || !c.viewReady) continue
+    const b = screenBodyRect(c)
+    if (b.x < r.right && b.x + b.w > r.left && b.y < r.bottom && b.y + b.h > r.top) return true
+  }
+  return false
+}
+
 function drawMinimap() {
-  const show = cards.size > 0 || zones.size > 0
+  const show = (cards.size > 0 || zones.size > 0) && !minimapOccluded()
   minimap.classList.toggle('hidden', !show)
   if (!show) return
   const ctx = minimap.getContext('2d')
@@ -2748,6 +2936,29 @@ async function runSelftest() {
     closeBmPanel()
     removeFolder('Research'); toggleBookmark(bmCard); bmFolders = []
 
+    // ---- settings: background modes + settings panel render ----
+    settings.bg = { mode: 'color', color: '#0d0b10' }
+    applyBackground()
+    if (!document.body.classList.contains('bg-solid')) report.errors.push('solid-color background did not apply')
+    settings.bg = { mode: 'image', image: 'data:image/gif;base64,R0lGODlhAQABAAAAACwAAAAAAQABAAA=' }
+    applyBackground()
+    if (document.body.classList.contains('bg-solid')) report.errors.push('image background left bg-solid on')
+    settings.bg = { mode: 'photos' }
+    applyBackground()
+    await renderSettingsPanel()
+    settingsOpen = true
+    if (!settingsPanelEl().querySelector('.setswatches')) report.errors.push('settings panel did not render swatches')
+    if (!settingsPanelEl().querySelector('.setextlist')) report.errors.push('settings panel did not render extensions section')
+    settingsOpen = false
+    report.settings = { swatches: SOLID_COLORS.length }
+
+    // ---- minimap occlusion: fullscreen hides the minimap ----
+    const fsCard = [...cards.values()][0]
+    enterFullscreen(fsCard)
+    if (!minimapOccluded()) report.errors.push('minimap not marked occluded during fullscreen')
+    exitFullscreen()
+    if (minimapOccluded()) report.errors.push('minimap still occluded after leaving fullscreen')
+
     startTour()
     if (!tourOpen) report.errors.push('walkthrough did not open')
     for (let i = 0; i < TOUR_STEPS.length + 2 && tourOpen; i++) { nextTour(); await sleep(50) }
@@ -2769,8 +2980,28 @@ async function runSelftest() {
 
 const BACKDROPS = [10, 11, 13, 15, 16, 28, 29, 46, 49, 110, 122, 128, 164, 184, 218]
 
-function initBackdrop() {
+// Applies whatever background the user has chosen in settings: a fresh Drift
+// photo (default), their own uploaded image, or a solid color.
+function applyBackground() {
   const img = document.getElementById('bgimg')
+  const bg = (settings.bg && typeof settings.bg === 'object') ? settings.bg : { mode: 'photos' }
+  document.body.classList.remove('bgready', 'nobg', 'bg-solid')
+
+  if (bg.mode === 'color' && bg.color) {
+    document.body.classList.add('bg-solid')
+    document.getElementById('bg').style.background = bg.color
+    return
+  }
+  document.getElementById('bg').style.background = ''
+
+  if (bg.mode === 'image' && bg.image) {
+    img.onload = () => document.body.classList.add('bgready')
+    img.onerror = () => document.body.classList.add('nobg')
+    img.src = bg.image
+    return
+  }
+
+  // Default: a curated Drift photo, different from last launch.
   let last = -1
   try { last = parseInt(localStorage.getItem('drift-bg') || '-1', 10) } catch {}
   let pick = Math.floor(Math.random() * BACKDROPS.length)
@@ -2778,8 +3009,8 @@ function initBackdrop() {
   try { localStorage.setItem('drift-bg', String(pick)) } catch {}
   const w = Math.min(3840, Math.round(innerWidth * (devicePixelRatio || 1)))
   const h = Math.min(2160, Math.round(innerHeight * (devicePixelRatio || 1)))
-  img.addEventListener('load', () => document.body.classList.add('bgready'))
-  img.addEventListener('error', () => document.body.classList.add('nobg'))
+  img.onload = () => document.body.classList.add('bgready')
+  img.onerror = () => document.body.classList.add('nobg')
   img.src = `https://picsum.photos/id/${BACKDROPS[pick]}/${Math.max(w, 1600)}/${Math.max(h, 1000)}`
 }
 
@@ -2839,9 +3070,29 @@ async function runPromoshot() {
 
 // ---------- boot ----------
 
+// The extension icon row talks to the extension system over IPC as soon as it
+// connects, so only mount it in a normal (non-headless) run where that system
+// exists — and only if the custom element got defined by the preload.
+function mountExtActions() {
+  if (HEADLESS) return
+  if (!('customElements' in window) || !customElements.get('browser-action-list')) return
+  const el = document.createElement('browser-action-list')
+  el.id = 'extactions'
+  el.setAttribute('partition', 'persist:drift')
+  el.setAttribute('alignment', 'bottom right')
+  $('#extslot').replaceWith(el)
+}
+
 async function init() {
   wireGlobalInput()
-  initBackdrop()
+  mountExtActions()
+  if (!HEADLESS) {
+    try {
+      const s = await drift.settingsLoad()
+      if (s && typeof s === 'object') settings = { bg: { mode: 'photos' }, ...s }
+    } catch {}
+  }
+  applyBackground()
   if (!HEADLESS) {
     const st = await drift.loadState()
     // Zones count as content too — a canvas of empty zones must survive a relaunch.
