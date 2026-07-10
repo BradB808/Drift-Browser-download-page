@@ -20,6 +20,11 @@ contextBridge.exposeInMainWorld('drift', {
   selftestArtifact: (name, dataUrl) => ipcRenderer.invoke('selftest:artifact', { name, dataUrl }),
   selftestDone: (report) => ipcRenderer.invoke('selftest:done', report),
   openDownloadPage: () => ipcRenderer.invoke('update:open'),
+  settingsLoad: () => ipcRenderer.invoke('settings:load'),
+  settingsSave: (s) => ipcRenderer.invoke('settings:save', s),
+  extList: () => ipcRenderer.invoke('ext:list'),
+  extAdd: () => ipcRenderer.invoke('ext:add'),
+  extRemove: (id) => ipcRenderer.invoke('ext:remove', id),
   onViewEvent: (fn) => ipcRenderer.on('view:event', (_e, d) => fn(d)),
   onUIKey: (fn) => ipcRenderer.on('ui:key', (_e, d) => fn(d)),
   onUpdateAvailable: (fn) => ipcRenderer.on('update:available', (_e, d) => fn(d))

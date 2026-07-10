@@ -3,7 +3,7 @@
 // per canvas card. The renderer is the canvas UI; it tells us where each live
 // page should sit on screen and at what zoom, and we position the native views.
 
-const { app, BrowserWindow, WebContentsView, ipcMain, Menu, shell, dialog } = require('electron')
+const { app, BrowserWindow, WebContentsView, ipcMain, Menu, shell, dialog, session } = require('electron')
 const path = require('path')
 const fs = require('fs')
 
@@ -246,6 +246,89 @@ ipcMain.handle('bookmarks:import', async () => {
   try { return fs.readFileSync(filePaths[0], 'utf8') } catch { return null }
 })
 
+// ---------- settings ----------
+// Small per-user preferences file (background choice, extension folders).
+
+const settingsFile = () => path.join(app.getPath('userData'), 'drift-settings.json')
+
+function readSettings() {
+  try { return JSON.parse(fs.readFileSync(settingsFile(), 'utf8')) } catch { return {} }
+}
+function writeSettings(s) {
+  try { fs.writeFileSync(settingsFile(), JSON.stringify(s)) } catch {}
+}
+
+ipcMain.handle('settings:load', () => readSettings())
+ipcMain.handle('settings:save', (_e, s) => {
+  if (SELFTEST || PROMO) return
+  if (s && typeof s === 'object') writeSettings(s)
+})
+
+// ---------- extensions ----------
+// Extensions load into the shared persist:drift session, so every card (tab)
+// gets them automatically — install once, present everywhere. Electron loads
+// UNPACKED extensions (a folder); there's no supported one-click Web Store
+// install, so the UI guides users to load an unpacked folder.
+
+const driftSession = () => session.fromPartition('persist:drift')
+const loadedExt = new Map() // path -> { id, name, version }
+
+function extInfo(ext, p) {
+  return { id: ext.id, name: ext.name, version: ext.manifest && ext.manifest.version, path: p }
+}
+
+async function loadExtensionPath(p) {
+  const ext = await driftSession().loadExtension(p, { allowFileAccess: true })
+  loadedExt.set(p, extInfo(ext, p))
+  return loadedExt.get(p)
+}
+
+async function loadPersistedExtensions() {
+  const s = readSettings()
+  const paths = Array.isArray(s.extensions) ? s.extensions : []
+  for (const p of paths) {
+    try { await loadExtensionPath(p) }
+    catch (err) { console.log('[drift] extension failed to load: ' + p + ' — ' + err.message) }
+  }
+}
+
+ipcMain.handle('ext:list', () => [...loadedExt.values()])
+
+ipcMain.handle('ext:add', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+    title: 'Load an unpacked extension folder',
+    properties: ['openDirectory'],
+    message: 'Pick the folder that contains the extension’s manifest.json'
+  })
+  if (canceled || !filePaths || !filePaths[0]) return { ok: false, canceled: true }
+  const p = filePaths[0]
+  try {
+    const info = await loadExtensionPath(p)
+    const s = readSettings()
+    const paths = Array.isArray(s.extensions) ? s.extensions : []
+    if (!paths.includes(p)) paths.push(p)
+    s.extensions = paths
+    writeSettings(s)
+    // Reload live pages so content scripts take effect immediately.
+    for (const [, m] of views) { try { m.view.webContents.reload() } catch {} }
+    return { ok: true, ext: info }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+})
+
+ipcMain.handle('ext:remove', (_e, id) => {
+  let removedPath = null
+  for (const [p, info] of loadedExt) if (info.id === id) { removedPath = p; break }
+  try { driftSession().removeExtension(id) } catch {}
+  if (removedPath) loadedExt.delete(removedPath)
+  const s = readSettings()
+  s.extensions = (Array.isArray(s.extensions) ? s.extensions : []).filter(p => p !== removedPath)
+  writeSettings(s)
+  for (const [, m] of views) { try { m.view.webContents.reload() } catch {} }
+  return { ok: true }
+})
+
 // ---------- password vault ----------
 // The renderer does all crypto (Web Crypto): the main process only ever stores
 // an opaque encrypted blob, and never sees a plaintext password.
@@ -434,10 +517,12 @@ app.on('web-contents-created', (_e, wc) => {
   })
 })
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   // The time-machine history log was removed in v0.2.1 — clear any file a
   // previous build left behind.
   fs.promises.rm(path.join(app.getPath('userData'), 'drift-history.json'), { force: true }).catch(() => {})
+  // Load the user's extensions into the shared session before any card goes live.
+  if (!SELFTEST && !PROMO) { try { await loadPersistedExtensions() } catch {} }
   buildMenu()
   createWindow()
   checkForUpdates()
