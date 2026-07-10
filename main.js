@@ -323,15 +323,33 @@ async function setupExtensions() {
       loadExtensions: true,
       async beforeInstall(details) {
         if (!details.browserWindow || details.browserWindow.isDestroyed()) return { action: 'allow' }
-        const perms = (details.manifest && details.manifest.permissions || []).join(', ')
+        const m = details.manifest || {}
+        // Disclose ALL of an extension's reach, not just classic permissions:
+        // host_permissions and content-script match patterns are what actually
+        // let it read/change the pages you visit — and every Drift tab shares
+        // one session, so broad access touches every site at once.
+        const hosts = [
+          ...(Array.isArray(m.host_permissions) ? m.host_permissions : []),
+          ...((Array.isArray(m.content_scripts) ? m.content_scripts : [])
+            .flatMap(cs => Array.isArray(cs.matches) ? cs.matches : []))
+        ]
+        const uniqHosts = [...new Set(hosts)]
+        const broad = uniqHosts.some(h => /<all_urls>|:\/\/\*\/|\*:\/\/\*/.test(h))
+        const perms = (Array.isArray(m.permissions) ? m.permissions : []).filter(p => typeof p === 'string')
+        const lines = []
+        if (broad) lines.push('⚠ This extension can read and change data on EVERY site you visit — across all your tabs.')
+        else if (uniqHosts.length) lines.push('Runs on: ' + uniqHosts.slice(0, 8).join(', ') + (uniqHosts.length > 8 ? ' …' : ''))
+        if (perms.length) lines.push('Permissions: ' + perms.slice(0, 12).join(', ') + (perms.length > 12 ? ' …' : ''))
+        if (!lines.length) lines.push('It applies to every tab.')
         const r = await dialog.showMessageBox(details.browserWindow, {
-          type: 'question',
+          type: broad ? 'warning' : 'question',
           title: 'Add extension',
           message: `Add “${details.localizedName}” to Drift?`,
-          detail: perms ? 'Permissions: ' + perms : 'It will apply to every tab.',
+          detail: lines.join('\n\n'),
           icon: details.icon,
           buttons: ['Cancel', 'Add Extension'],
-          defaultId: 1,
+          // Broad-reach extensions default to Cancel so the risky choice is deliberate.
+          defaultId: broad ? 0 : 1,
           cancelId: 0
         })
         return { action: r.response === 1 ? 'allow' : 'deny' }
