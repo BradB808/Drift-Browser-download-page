@@ -502,6 +502,15 @@ body.nobg #bgimg { display: none; }
 
 #btnFullExit { border-color: var(--accent-dim); color: var(--accent); }
 
+/* Extension action icons in the toolbar */
+#toolbar browser-action-list {
+  display: inline-flex;
+  align-items: center;
+  height: 30px;
+  --browser-action-badge-color: #fff;
+  --browser-action-badge-outline: rgba(0, 0, 0, 0.4);
+}
+
 #btnUpdate {
   border: 0;
   background: linear-gradient(90deg, var(--accent), var(--accent2));

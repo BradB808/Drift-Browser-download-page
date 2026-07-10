@@ -1085,6 +1085,23 @@ function spawnChild(parent, url) {
   return c
 }
 
+// An extension (or the Web Store) opened a new tab whose native view already
+// exists in main — create a card bound to it without asking for a new view.
+function adoptCard(id, url) {
+  if (cards.has(id)) return cards.get(id)
+  const w = 860, h = 600
+  const p = toWorld(innerWidth / 2, TOOLBAR + (innerHeight - TOOLBAR) / 2)
+  let [x, y] = findFreeSpot(p.x - w / 2, p.y - h / 2, w, h)
+  const c = createCard({ id, url: url || 'about:blank', x, y, w, h })
+  c.viewCreated = true
+  c.viewReady = true
+  setActive(c.id)
+  flashCard(c)
+  ensureVisible(c)
+  scheduleLayout()
+  return c
+}
+
 function ensureVisible(c) {
   const r = screenRect(c)
   const m = 40
@@ -1447,6 +1464,7 @@ function wireGlobalInput() {
   $('#btnBmExport').addEventListener('click', exportBookmarks)
   $('#btnBmClear').addEventListener('click', clearAllBookmarks)
   $('#btnSettings').addEventListener('click', () => { settingsOpen ? closeSettingsPanel() : openSettingsPanel() })
+  $('#btnExt').addEventListener('click', () => drift.extOpenStore())
   if (VAULT_ENABLED) {
     $('#btnVault').classList.remove('hidden')
     $('#btnVault').addEventListener('click', () => { vaultOpen ? closeVaultPanel() : openVaultPanel() })
@@ -2279,24 +2297,16 @@ async function renderSettingsPanel() {
   // ---- Extensions ----
   body.appendChild(vEl('div', 'setsec', 'Extensions'))
   body.appendChild(vEl('div', 'setnote',
-    'Extensions load into every tab at once. Drift loads unpacked extensions (a folder with a manifest.json) — the same ones work across all your pages. There’s no one-click Chrome Web Store install yet.'))
-  const addExt = vEl('button', 'setbtn', '+ Load unpacked extension…')
-  addExt.addEventListener('click', async () => {
-    addExt.disabled = true
-    addExt.textContent = 'Loading…'
-    const res = await drift.extAdd()
-    addExt.disabled = false
-    if (res && res.ok) toast('Extension loaded: ' + (res.ext.name || 'ok'))
-    else if (res && !res.canceled) toast('Couldn’t load: ' + (res.error || 'invalid extension'))
-    renderSettingsPanel()
-  })
-  body.appendChild(addExt)
+    'Install extensions from the Chrome Web Store — they apply to every tab, and their icons appear in the toolbar. Some newer extensions may not fully work yet.'))
+  const store = vEl('button', 'setbtn', '🧩 Browse the Chrome Web Store')
+  store.addEventListener('click', () => { drift.extOpenStore(); closeSettingsPanel() })
+  body.appendChild(store)
 
   const list = vEl('div', 'setextlist')
   body.appendChild(list)
   let exts = []
   try { exts = await drift.extList() } catch {}
-  if (!exts.length) list.appendChild(vEl('div', 'setnote', 'No extensions loaded.'))
+  if (!exts.length) list.appendChild(vEl('div', 'setnote', 'No extensions installed yet.'))
   for (const e of exts) {
     const r2 = vEl('div', 'setextrow')
     const main = vEl('div', 'setextmain')
@@ -2478,6 +2488,15 @@ drift.onUpdateAvailable(({ version }) => {
   $('#btnUpdate').textContent = `⬇ Drift ${version} is out — get the update`
   $('#updateG').classList.remove('hidden')
 })
+
+// Extension tab lifecycle (chrome.tabs.* and Web Store).
+drift.onExtAdoptTab(({ id, url }) => adoptCard(id, url))
+drift.onExtSelectTab(({ id }) => {
+  const c = cards.get(id)
+  if (c) { setActive(id); drift.raise(id); ensureVisible(c) }
+})
+drift.onExtRemoveTab(({ id }) => { if (cards.has(id)) closeCard(id) })
+drift.onSpawnUrl(({ url }) => { const c = newCard(url); if (c) flashCard(c) })
 
 drift.onUIKey(({ key }) => {
   if (tourOpen && key !== 'escape' && key !== 'tour') return
@@ -3051,8 +3070,22 @@ async function runPromoshot() {
 
 // ---------- boot ----------
 
+// The extension icon row talks to the extension system over IPC as soon as it
+// connects, so only mount it in a normal (non-headless) run where that system
+// exists — and only if the custom element got defined by the preload.
+function mountExtActions() {
+  if (HEADLESS) return
+  if (!('customElements' in window) || !customElements.get('browser-action-list')) return
+  const el = document.createElement('browser-action-list')
+  el.id = 'extactions'
+  el.setAttribute('partition', 'persist:drift')
+  el.setAttribute('alignment', 'bottom right')
+  $('#extslot').replaceWith(el)
+}
+
 async function init() {
   wireGlobalInput()
+  mountExtActions()
   if (!HEADLESS) {
     try {
       const s = await drift.settingsLoad()

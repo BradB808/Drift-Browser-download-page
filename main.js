@@ -92,6 +92,7 @@ function createView(id, url) {
   })
   views.set(id, { view, attached: false, zoom: null })
   wireView(id, view)
+  attachExtTab(view.webContents)
   view.webContents.loadURL(url).catch(() => {})
   return view
 }
@@ -168,8 +169,11 @@ ipcMain.on('view:layout', (_e, { zoom, items }) => {
 
 ipcMain.on('view:raise', (_e, id) => {
   const m = views.get(id)
+  if (!m) return
   // Re-adding an attached view bumps it to the top of the stack.
-  if (m && m.attached && win && !win.isDestroyed()) win.contentView.addChildView(m.view)
+  if (m.attached && win && !win.isDestroyed()) win.contentView.addChildView(m.view)
+  // Tell the extension system this is the active tab, so its action icons update.
+  selectExtTab(m.view.webContents)
 })
 
 ipcMain.handle('view:snapshot', async (_e, { id, width }) => {
@@ -247,7 +251,7 @@ ipcMain.handle('bookmarks:import', async () => {
 })
 
 // ---------- settings ----------
-// Small per-user preferences file (background choice, extension folders).
+// Small per-user preferences file (currently just the background choice).
 
 const settingsFile = () => path.join(app.getPath('userData'), 'drift-settings.json')
 
@@ -265,66 +269,104 @@ ipcMain.handle('settings:save', (_e, s) => {
 })
 
 // ---------- extensions ----------
-// Extensions load into the shared persist:drift session, so every card (tab)
-// gets them automatically — install once, present everywhere. Electron loads
-// UNPACKED extensions (a folder); there's no supported one-click Web Store
-// install, so the UI guides users to load an unpacked folder.
+// Real Chrome extensions via electron-chrome-extensions + electron-chrome-web-store.
+// Everything runs in the shared persist:drift session, so an extension installed
+// once applies to every card (tab). Action icons render in the canvas toolbar as
+// <browser-action-list> and reflect the focused card.
+
+const { ElectronChromeExtensions } = require('electron-chrome-extensions')
+const { installChromeWebStore, uninstallExtension } = require('electron-chrome-web-store')
 
 const driftSession = () => session.fromPartition('persist:drift')
-const loadedExt = new Map() // path -> { id, name, version }
+let extensions = null
 
-function extInfo(ext, p) {
-  return { id: ext.id, name: ext.name, version: ext.manifest && ext.manifest.version, path: p }
+// Map a webContents back to the card id the renderer knows it by.
+function idOfWebContents(wc) {
+  for (const [id, m] of views) if (m.view.webContents === wc) return id
+  return null
 }
 
-async function loadExtensionPath(p) {
-  const ext = await driftSession().loadExtension(p, { allowFileAccess: true })
-  loadedExt.set(p, extInfo(ext, p))
-  return loadedExt.get(p)
-}
+async function setupExtensions() {
+  const s = driftSession()
+  try { ElectronChromeExtensions.handleCRXProtocol(s) } catch {}
 
-async function loadPersistedExtensions() {
-  const s = readSettings()
-  const paths = Array.isArray(s.extensions) ? s.extensions : []
-  for (const p of paths) {
-    try { await loadExtensionPath(p) }
-    catch (err) { console.log('[drift] extension failed to load: ' + p + ' — ' + err.message) }
-  }
-}
-
-ipcMain.handle('ext:list', () => [...loadedExt.values()])
-
-ipcMain.handle('ext:add', async () => {
-  const { canceled, filePaths } = await dialog.showOpenDialog(win, {
-    title: 'Load an unpacked extension folder',
-    properties: ['openDirectory'],
-    message: 'Pick the folder that contains the extension’s manifest.json'
+  extensions = new ElectronChromeExtensions({
+    license: 'GPL-3.0',
+    session: s,
+    // An extension opened a new tab: make a Drift card that adopts the view.
+    createTab: async (details) => {
+      const id = 'x' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36)
+      const view = new WebContentsView({ webPreferences: { sandbox: true, partition: 'persist:drift' } })
+      views.set(id, { view, attached: false, zoom: null })
+      wireView(id, view)
+      try { extensions.addTab(view.webContents, win) } catch {}
+      const u = safeUrl(details.url || '')
+      if (u) view.webContents.loadURL(u).catch(() => {})
+      sendUI('ext:adoptTab', { id, url: details.url || '' })
+      return [view.webContents, win]
+    },
+    selectTab: (tab) => {
+      const id = idOfWebContents(tab)
+      if (id) sendUI('ext:selectTab', { id })
+    },
+    removeTab: (tab) => {
+      const id = idOfWebContents(tab)
+      if (id) sendUI('ext:removeTab', { id })
+    }
   })
-  if (canceled || !filePaths || !filePaths[0]) return { ok: false, canceled: true }
-  const p = filePaths[0]
+
+  // Enable Chrome Web Store install (with a permission confirmation) and load
+  // any previously installed extensions.
   try {
-    const info = await loadExtensionPath(p)
-    const s = readSettings()
-    const paths = Array.isArray(s.extensions) ? s.extensions : []
-    if (!paths.includes(p)) paths.push(p)
-    s.extensions = paths
-    writeSettings(s)
-    // Reload live pages so content scripts take effect immediately.
-    for (const [, m] of views) { try { m.view.webContents.reload() } catch {} }
-    return { ok: true, ext: info }
+    await installChromeWebStore({
+      session: s,
+      loadExtensions: true,
+      async beforeInstall(details) {
+        if (!details.browserWindow || details.browserWindow.isDestroyed()) return { action: 'allow' }
+        const perms = (details.manifest && details.manifest.permissions || []).join(', ')
+        const r = await dialog.showMessageBox(details.browserWindow, {
+          type: 'question',
+          title: 'Add extension',
+          message: `Add “${details.localizedName}” to Drift?`,
+          detail: perms ? 'Permissions: ' + perms : 'It will apply to every tab.',
+          icon: details.icon,
+          buttons: ['Cancel', 'Add Extension'],
+          defaultId: 1,
+          cancelId: 0
+        })
+        return { action: r.response === 1 ? 'allow' : 'deny' }
+      }
+    })
   } catch (err) {
-    return { ok: false, error: err.message }
+    console.log('[drift] web store setup failed: ' + err.message)
   }
+}
+
+// Register a card's page with the extension system so chrome.tabs sees it.
+function attachExtTab(wc) {
+  if (extensions) { try { extensions.addTab(wc, win) } catch {} }
+}
+function selectExtTab(wc) {
+  if (extensions && wc) { try { extensions.selectTab(wc) } catch {} }
+}
+
+ipcMain.handle('ext:list', () => {
+  try {
+    return driftSession().extensions.getAllExtensions()
+      .filter(e => e.id) // hide the internal web-store helper if present
+      .map(e => ({ id: e.id, name: e.name, version: e.manifest && e.manifest.version }))
+  } catch { return [] }
 })
 
-ipcMain.handle('ext:remove', (_e, id) => {
-  let removedPath = null
-  for (const [p, info] of loadedExt) if (info.id === id) { removedPath = p; break }
-  try { driftSession().removeExtension(id) } catch {}
-  if (removedPath) loadedExt.delete(removedPath)
-  const s = readSettings()
-  s.extensions = (Array.isArray(s.extensions) ? s.extensions : []).filter(p => p !== removedPath)
-  writeSettings(s)
+// Open the Chrome Web Store as a card so the user can browse & install.
+ipcMain.handle('ext:openStore', () => {
+  sendUI('view:spawnUrl', { url: 'https://chromewebstore.google.com/' })
+  return { ok: true }
+})
+
+ipcMain.handle('ext:remove', async (_e, id) => {
+  try { await uninstallExtension(id, { session: driftSession() }) }
+  catch { try { driftSession().extensions.removeExtension(id) } catch {} }
   for (const [, m] of views) { try { m.view.webContents.reload() } catch {} }
   return { ok: true }
 })
@@ -501,7 +543,10 @@ function createWindow() {
     backgroundColor: '#0b0d12',
     title: 'Drift',
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js')
+      preload: path.join(__dirname, 'preload.js'),
+      // Trusted local UI. sandbox:false lets the preload require the
+      // browser-action module that injects the extension icon element.
+      sandbox: false
     }
   })
   win.loadFile('renderer/index.html', { query: SELFTEST ? { selftest: '1' } : PROMO ? { promo: '1' } : {} })
@@ -513,7 +558,11 @@ function createWindow() {
 app.on('web-contents-created', (_e, wc) => {
   wc.on('will-navigate', (e, url) => {
     if (win && wc === win.webContents) { e.preventDefault(); return }
-    if (!safeUrl(url)) e.preventDefault()
+    // Pages stay on http(s); extension surfaces (popups, options) need their
+    // own protocols, so allow those too.
+    let proto = ''
+    try { proto = new URL(url).protocol } catch {}
+    if (!['http:', 'https:', 'chrome-extension:', 'devtools:'].includes(proto)) e.preventDefault()
   })
 })
 
@@ -521,10 +570,10 @@ app.whenReady().then(async () => {
   // The time-machine history log was removed in v0.2.1 — clear any file a
   // previous build left behind.
   fs.promises.rm(path.join(app.getPath('userData'), 'drift-history.json'), { force: true }).catch(() => {})
-  // Load the user's extensions into the shared session before any card goes live.
-  if (!SELFTEST && !PROMO) { try { await loadPersistedExtensions() } catch {} }
   buildMenu()
   createWindow()
+  // Set up the extension system + Chrome Web Store (skipped in headless runs).
+  if (!SELFTEST && !PROMO) { setupExtensions().catch(err => console.log('[drift] ext setup: ' + err.message)) }
   checkForUpdates()
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })
 })
