@@ -1,59 +1,60 @@
-# Enabling DRM streaming (Netflix, Disney+, etc.)
+# DRM streaming (Netflix, Disney+, etc.)
 
 Stock Electron ships **without** the Widevine Content Decryption Module (CDM), so
-protected video (Netflix, Disney+, Max, Amazon, Spotify) silently fails to play.
-Drift's code is already wired for Widevine — it just needs the castlabs "Electron
-for Content Security" (ECS) build plus a one-time signing step that only you can do
-(it requires a free castlabs account; an AI must not create accounts on your behalf).
+protected video silently fails to play. Drift now runs on the castlabs "Electron for
+Content Security" build, loads the Widevine CDM at startup (`main.js` →
+`components.whenReady()`), and VMP-signs packaged builds so production services accept it.
 
-The relevant code (`main.js`) awaits `components.whenReady()` before opening a window,
-which is a no-op on stock Electron and loads the CDM on the castlabs build.
+**Status: enabled and verified.** The Widevine CDM (v4.10.3050.0) loads, a
+`com.widevine.alpha` MediaKeys can be created, and the packaged app carries a valid
+production **streaming** VMP signature (`npm run drm:verify` and
+`python3 -m castlabs_evs.vmp verify-pkg dist/mac-arm64` confirm it). The Apple Silicon
+DMG (`dist/Drift-mac-arm64.dmg`) plays Netflix/Disney+.
 
-## One-time setup
+## How it's wired
+- `devDependencies.electron` → `github:castlabs/electron-releases#v37.10.3+wvcus`
+  (exact match for Electron 37.10.3 / Chromium 138).
+- `main.js` awaits `components.whenReady()` before opening a window (no-op on stock
+  Electron, so the code is safe either way).
+- `build/vmp-sign.js` runs in the `afterPack` hook **before** the ad-hoc codesign and
+  VMP-signs the packaged app (no-op unless it's a `+wvcus` build with EVS configured).
+- `build/repair-frameworks.js` recreates the macOS framework symlinks that the castlabs
+  zip drops on extraction (otherwise the app crashes at launch with a dyld error).
 
-### 1. Swap Electron for the castlabs Widevine build
+## npm scripts
+| script | what it does |
+|---|---|
+| `npm run drm:enable`   | install the castlabs Widevine Electron build + repair framework symlinks |
+| `npm run drm:fix`      | re-run the symlink repair (after any `npm install`) |
+| `npm run drm:sign-dev` | VMP-sign the local Electron so `npm start` streams |
+| `npm run drm:dist`     | build the signed, DRM-capable Apple Silicon DMG |
+| `npm run drm:verify`   | confirm the CDM loads and a Widevine MediaKeys can be created |
+
+## Rebuilding from scratch (e.g. after `npm install`)
 ```
-npm run drm:enable
+npm run drm:enable      # if electron was reinstalled as stock
+npm run drm:sign-dev    # needs your castlabs EVS account (below)
+npm run drm:dist        # -> dist/Drift-mac-arm64.dmg
 ```
-This installs `github:castlabs/electron-releases#v37.10.3+wvcus` (exact match for
-Drift's Electron 37.10.3, Chromium 138 — verified to boot and expose the `components`
-API). To go back to stock: `npm install electron@^37.0.0 --save-dev`.
 
-> Note: keep Electron on the **37.x** series. Extensions (the per-tab Claude side
-> panel, ad blockers) rely on MV3 service-worker support that regresses on Electron
-> 40+, so don't bump the Electron major just to chase a newer castlabs tag.
-
-### 2. Create a free castlabs EVS account and install the signing tool
+## The castlabs EVS account
+VMP signing requires a free castlabs account (already set up for this repo). If the
+signing token ever expires you'll see it in a build/sign warning — refresh with:
 ```
-pip3 install --user castlabs-evs
-python3 -m castlabs_evs.account signup      # <-- you must do this; it needs a real login
+python3 -m castlabs_evs.account reauth
 ```
-(Use `python3 -m castlabs_evs.account reauth` later if the token expires.)
+To set it up on a fresh machine: `pip3 install --user castlabs-evs` then
+`python3 -m castlabs_evs.account signup`.
 
-### 3a. Play DRM while developing (`npm start`)
-The dev binary must be VMP-signed once per install:
-```
-npm run drm:sign-dev
-```
-Re-run this after any `npm install` that reinstalls Electron. Then `npm start` and
-Netflix/Disney+ should play.
-
-### 3b. Play DRM in packaged builds (`npm run dist`)
-Nothing extra to do — `build/vmp-sign.js` runs automatically in the `afterPack` hook
-(before the ad-hoc codesign, which is the required order on macOS). It's a no-op
-unless (a) Electron is the `+wvcus` build and (b) `castlabs-evs` is installed with an
-account configured; otherwise it prints a warning and the build still finishes (just
-without production DRM).
-
-## What to expect (be realistic)
-- **Resolution is capped ~720p.** The software Widevine CDM (L3) is what Chrome uses;
-  Netflix/Disney+ reserve 1080p/4K for hardware DRM paths.
-- **Disney+ may need a Chrome user agent.** If it errors with "code 83", set a real
-  Chrome UA for that card. Drift already strips "Electron" from its UA, which is
-  usually enough, but a per-site override may be needed. (Overriding the UA can, in
-  turn, break Netflix — apply UA changes per-domain, not globally.)
-- **Not guaranteed per-service.** castlabs' maintainer verified Netflix playing in
-  properly VMP-signed builds as recently as 2026-03; Disney+ works with the UA caveat.
-  Some services fingerprint aggressively — test each one after signing.
-- The Widevine CDM downloads from Google on first launch (needs network); it cannot
+## Known limitations / follow-ups
+- **Apple Silicon (arm64) only, for now.** `drm:dist` builds arm64 because it packages
+  the locally-installed Widevine Electron (which is one architecture). An Intel (x64)
+  DRM DMG needs the x64 castlabs build installed and a separate `--x64` build; the
+  previous stock x64 DMG was removed rather than shipped as a broken/no-DRM artifact.
+- **Resolution is capped ~720p** — the software Widevine CDM (L3), same as desktop Chrome;
+  1080p/4K are reserved for hardware DRM.
+- **Disney+ may need a Chrome user agent** (else "error code 83"). Drift already strips
+  "Electron" from its UA; if a service still refuses, apply a per-domain Chrome UA
+  (overriding it globally can break Netflix).
+- The Widevine CDM downloads from Google on first launch (needs network); it can't
   legally be bundled.

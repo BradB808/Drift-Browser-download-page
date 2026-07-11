@@ -23,8 +23,8 @@ exports.default = async function vmpSign(context) {
   if (context.electronPlatformName !== 'darwin') return
   if (!electronIsWidevine()) return // stock Electron: nothing to VMP-sign
 
-  const appName = context.packager.appInfo.productFilename
-  const appPath = path.join(context.appOutDir, `${appName}.app`)
+  // sign-pkg scans a DIRECTORY for *.app (not the .app itself), so hand it appOutDir.
+  const outDir = context.appOutDir
   const run = (args) => execFileSync('python3', args, { stdio: 'pipe' }).toString()
 
   try {
@@ -37,8 +37,8 @@ exports.default = async function vmpSign(context) {
   }
 
   try {
-    console.log(`  • VMP-signing ${appPath} …`)
-    const out = run(['-m', 'castlabs_evs.vmp', 'sign-pkg', appPath])
+    console.log(`  • VMP-signing ${outDir} …`)
+    const out = run(['-m', 'castlabs_evs.vmp', 'sign-pkg', outDir])
     console.log('  • Widevine VMP sign OK: ' + out.trim().split('\n').slice(-1)[0])
   } catch (err) {
     const msg = (err.stderr && err.stderr.toString()) || err.message

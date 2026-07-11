@@ -700,7 +700,9 @@ app.whenReady().then(async () => {
   if (widevine && !SELFTEST && !PROMO) {
     try {
       await widevine.whenReady()
-      console.log('[drift] Widevine ready: ' + (widevine.status ? widevine.status() : 'ok'))
+      let status = 'ok'
+      try { status = widevine.status ? JSON.stringify(widevine.status()) : 'ok' } catch {}
+      console.log('[drift] Widevine ready: ' + status)
     } catch (err) { console.log('[drift] Widevine load failed: ' + err.message) }
   }
   buildMenu()

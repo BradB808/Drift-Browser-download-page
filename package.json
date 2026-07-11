@@ -10,11 +10,14 @@
     "selftest": "electron . --selftest",
     "promoshot": "electron . --promoshot",
     "dist": "electron-builder --mac --win",
-    "drm:enable": "npm install \"github:castlabs/electron-releases#v37.10.3+wvcus\" --save-dev",
-    "drm:sign-dev": "python3 -m castlabs_evs.vmp sign-pkg node_modules/electron/dist"
+    "drm:enable": "npm install \"github:castlabs/electron-releases#v37.10.3+wvcus\" --save-dev && node build/repair-frameworks.js",
+    "drm:fix": "node build/repair-frameworks.js",
+    "drm:sign-dev": "python3 -m castlabs_evs.vmp sign-pkg node_modules/electron/dist",
+    "drm:dist": "electron-builder --mac dmg --arm64 -c.electronDist=node_modules/electron/dist",
+    "drm:verify": "electron build/widevine-check.js"
   },
   "devDependencies": {
-    "electron": "^37.0.0",
+    "electron": "github:castlabs/electron-releases#v37.10.3+wvcus",
     "electron-builder": "^26.15.3"
   },
   "build": {
