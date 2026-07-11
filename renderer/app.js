@@ -52,6 +52,7 @@ let bmOpen = false
 let settingsOpen = false
 let settings = { bg: { mode: 'photos' } } // loaded from disk at boot
 let dirty = false
+let snapDirty = false                // only thumbnails changed; persisted lazily, not per-save-tick
 let layoutQueued = false
 let animToken = 0
 let viewFreeze = false               // during zoom animations, pages show snapshots
@@ -769,12 +770,20 @@ function updateEdges() {
     const p2 = { x: goRight ? b.x : b.x + b.w, y: b.y + b.h / 2 }
     const dx = Math.max(60, Math.abs(p2.x - p1.x) / 2) * (goRight ? 1 : -1)
     const d = `M ${p1.x} ${p1.y} C ${p1.x + dx} ${p1.y}, ${p2.x - dx} ${p2.y}, ${p2.x} ${p2.y}`
-    el.path.setAttribute('d', d)
-    el.hit.setAttribute('d', d)
-    el.hit.setAttribute('stroke-width', String(16 / V.s))
-    el.dot.setAttribute('cx', p2.x)
-    el.dot.setAttribute('cy', p2.y)
-    el.dot.setAttribute('r', 5 / V.s)
+    // Re-setting identical attributes still invalidates the SVG (a repaint per
+    // edge per frame during pans) — write only what actually changed.
+    if (el.d !== d) {
+      el.path.setAttribute('d', d)
+      el.hit.setAttribute('d', d)
+      el.dot.setAttribute('cx', p2.x)
+      el.dot.setAttribute('cy', p2.y)
+      el.d = d
+    }
+    if (el.zs !== V.s) {
+      el.hit.setAttribute('stroke-width', String(16 / V.s))
+      el.dot.setAttribute('r', 5 / V.s)
+      el.zs = V.s
+    }
   }
 }
 
@@ -913,12 +922,38 @@ function scheduleLayout() {
   }
 }
 
+// setZoomFactor forces a full relayout inside every live page, so re-zooming
+// N views on every frame of a pinch/wheel gesture is N page relayouts per
+// frame. Bounds stay exact each frame; the content zoom factor steps at ~8Hz
+// and a trailing pass lands the exact value right after the gesture stops.
+let zoomSent = null, zoomSentAt = 0, zoomTrail = 0
+function throttledZoom(z) {
+  const now = performance.now()
+  if (zoomSent === null || z === zoomSent || now - zoomSentAt >= 120) {
+    if (z !== zoomSent) { zoomSent = z; zoomSentAt = now }
+    return z
+  }
+  clearTimeout(zoomTrail)
+  zoomTrail = setTimeout(scheduleLayout, 140 - (now - zoomSentAt))
+  return zoomSent
+}
+// Animations end on a known exact zoom — bypass the throttle so the landing
+// frame is crisp (and matches any prezoomed view, avoiding a double relayout).
+function flushZoom() { zoomSent = null }
+
+let gridS = 0
+let edgeGroupS = 0
 function doLayout() {
   layoutQueued = false
   world.style.transform = `translate(${V.ox}px, ${V.oy}px) scale(${V.s})`
-  gridEl.style.backgroundSize = `${24 * V.s}px ${24 * V.s}px`
-  gridEl.style.backgroundPosition = `${V.ox}px ${V.oy}px`
-  edgeG.setAttribute('stroke-width', String(2.5 / V.s))
+  // The dot grid pans by compositor transform (free) instead of background-
+  // position (a full-screen repaint per frame). #grid is oversized by one
+  // tile (72px inset in CSS) so the translate never exposes a bare edge;
+  // only zoom changes still repaint it (the tile pitch really changes then).
+  const ts = 24 * V.s
+  if (gridS !== V.s) { gridEl.style.backgroundSize = `${ts}px ${ts}px`; gridS = V.s }
+  gridEl.style.transform = `translate(${(((V.ox + 72) % ts) + ts) % ts}px, ${(((V.oy + 72) % ts) + ts) % ts}px)`
+  if (edgeGroupS !== V.s) { edgeG.setAttribute('stroke-width', String(2.5 / V.s)); edgeGroupS = V.s }
   if (zones.size) {
     // Zone labels counter-scale so they stay readable from orbit.
     zonesEl.style.setProperty('--zfs', clamp(14 / V.s, 13, 60) + 'px')
@@ -940,7 +975,7 @@ function doLayout() {
       }
     }
   }
-  drift.layout({ zoom: fullId ? 1 : V.s, items })
+  drift.layout({ zoom: throttledZoom(fullId ? 1 : V.s), items })
   zoomPct.textContent = Math.round(V.s * 100) + '%'
   updateEdges()
   drawMinimap()
@@ -972,10 +1007,19 @@ function decideLiveness() {
     const fc = cards.get(fullId)
     if (fc) fc.wantLive = true
   }
+  // Zooming out across the live threshold retires every live card in the same
+  // frame; a fresh parting thumbnail for each would mean up to 10 capturePage
+  // readbacks + encodes landing in one gesture frame. Only the most recently
+  // used two get a fresh capture — the rest keep their rolling snapshot.
+  const toRetire = []
   for (const c of cards.values()) {
     if (c.retiring) continue
     if (c.wantLive && !c.live) goLive(c)
-    else if (!c.wantLive && c.live) retire(c, overlay)
+    else if (!c.wantLive && c.live) toRetire.push(c)
+  }
+  if (toRetire.length) {
+    toRetire.sort((a, b) => b.lastActive - a.lastActive)
+    toRetire.forEach((c, i) => retire(c, overlay || i >= 2))
   }
 }
 
@@ -1012,6 +1056,7 @@ function pruneViews() {
     .forEach(c => {
       c.viewCreated = false
       c.viewReady = false
+      c.mediaPlaying = false // no 'media-paused' arrives once the view is gone
       unmountCardExtActions(c) // its tab id dies with the view
       drift.destroyView(c.id)
     })
@@ -1028,7 +1073,11 @@ async function takeSnapshot(c, force) {
       c.snapEl.src = d
       c.snapEl.classList.remove('hidden')
       c.lastSnap = Date.now()
-      markDirty()
+      // A rolling refresh only touches this thumbnail — a full multi-MB state
+      // save every few seconds for that reads as browsing jank. Persist those
+      // lazily (snapDirty); forced captures ride along with real state changes.
+      if (force) markDirty()
+      else snapDirty = true
     }
   } finally { c.snapPending = false }
 }
@@ -1046,6 +1095,10 @@ drift.onViewEvent(d => {
       c.canGoBack = d.canGoBack
       c.canGoForward = d.canGoForward
       c.error = null
+      // Main-frame navigation stops playback and 'media-paused' isn't
+      // guaranteed — reset here, NOT on 'loading' (subframe/ad loads fire
+      // that mid-playback and would wrongly clear the flag).
+      c.mediaPlaying = false
       renderHead(c)
       markDirty()
       if (c.id === fullId) updateFullPill()
@@ -1055,6 +1108,7 @@ drift.onViewEvent(d => {
       renderHead(c)
       if (!d.loading) { c.everLoaded = true; takeSnapshot(c) }
       break
+    case 'media': c.mediaPlaying = d.playing; break
     case 'fail': c.error = d.desc; renderHead(c); break
     case 'spawn': spawnChild(c, d.url); break
     case 'focus': setActive(c.id); break
@@ -1197,6 +1251,13 @@ function animateView(target, ms = 280) {
   // Pure pans keep pages live — moving without rescaling doesn't reflow.
   viewFreeze = Math.abs(target.s - from.s) / from.s > 0.12
   const tok = ++animToken
+  if (viewFreeze && !fullId) {
+    // The landing zoom is known now: have every (detached) page relayout to it
+    // DURING the flight, behind its snapshot, so nothing pops at touchdown.
+    // 50ms in, the first frame has already detached the views. (In fullscreen
+    // the visible card lands at zoom 1, not target.s — skip entirely.)
+    setTimeout(() => { if (tok === animToken) drift.prezoom('*', target.s) }, 50)
+  }
   const t0 = performance.now()
   const ease = x => 1 - Math.pow(1 - x, 3)
   function step(now) {
@@ -1209,6 +1270,7 @@ function animateView(target, ms = 280) {
     if (k < 1) requestAnimationFrame(step)
     else {
       viewFreeze = false
+      flushZoom() // land on the exact zoom (and match any prezoomed page)
       markDirty()
       scheduleLayout()
     }
@@ -1276,8 +1338,12 @@ function focusCard(c) {
     ox: innerWidth / 2 - (c.x + c.w / 2) * s,
     oy: TOOLBAR + (innerHeight - TOOLBAR) / 2 - (c.y + c.h / 2) * s
   })
-  // Fresh thumbnail first, so the frozen frame matches the live page.
-  if (c.live && c.viewCreated) takeSnapshot(c, true).then(go)
+  // A fresh thumbnail makes the frozen frame match the live page, but the
+  // capture round trip can take 100ms+ — never let it hold the click hostage.
+  // The animation starts within 90ms either way; a late frame swaps in
+  // mid-flight. Cards playing video skip the capture entirely (it steals a
+  // frame from the decoder and the picture changes immediately anyway).
+  if (c.live && c.viewCreated && !c.mediaPlaying) Promise.race([takeSnapshot(c, true), sleep(90)]).then(go)
   else go()
 }
 
@@ -1325,8 +1391,9 @@ function exitFocus() {
   const target = focusState.prev
   focusState = null
   const c = activeId && cards.get(activeId)
-  // Fresh thumbnail of the page you were just reading, then glide out.
-  if (c && c.live && c.viewCreated) takeSnapshot(c, true).then(() => animateView(target))
+  // Fresh thumbnail of the page you were just reading, then glide out — with
+  // the same 90ms deadline as focusCard so leaving never feels sticky.
+  if (c && c.live && c.viewCreated && !c.mediaPlaying) Promise.race([takeSnapshot(c, true), sleep(90)]).then(() => animateView(target))
   else animateView(target)
 }
 
@@ -2624,9 +2691,28 @@ function minimapTransform() {
 // The minimap is DOM, but live pages are native views that always paint on
 // top of the DOM — so a page overlapping the minimap corner clips it and looks
 // broken. Hide the minimap whenever a live view (or fullscreen page) covers it.
+
+// It's position:fixed at a constant size, so measure once per window size —
+// getBoundingClientRect every frame forces a synchronous layout right after
+// doLayout's style writes.
+let mmRect = null, mmRectW = 0, mmRectH = 0
+function minimapRect() {
+  // Hidden minimap occludes nothing (and measures as a zero rect anyway) —
+  // matches the pre-cache behavior so it can re-show itself next frame.
+  if (minimap.classList.contains('hidden')) return null
+  if (mmRect && mmRectW === innerWidth && mmRectH === innerHeight) return mmRect
+  const r = minimap.getBoundingClientRect()
+  if (!r.width) return null // display:none — not measurable yet
+  mmRectW = innerWidth
+  mmRectH = innerHeight
+  mmRect = { left: r.left, top: r.top, right: r.right, bottom: r.bottom }
+  return mmRect
+}
+
 function minimapOccluded() {
   if (fullId && cards.get(fullId)?.viewReady) return true
-  const r = minimap.getBoundingClientRect()
+  const r = minimapRect()
+  if (!r) return false
   for (const c of cards.values()) {
     if (!c.live || !c.viewReady) continue
     const b = screenBodyRect(c)
@@ -2874,7 +2960,7 @@ async function runSelftest() {
     focusCard(b)
     await sleep(900)
     const shot = await drift.snapshot(b.id, 1200)
-    if (shot) await drift.selftestArtifact('selftest-page.png', shot)
+    if (shot) await drift.selftestArtifact('selftest-page.jpg', shot)
     else report.errors.push('page snapshot failed')
 
     // Zoom out past the live threshold: constellation of DOM thumbnails,
@@ -2936,7 +3022,7 @@ async function runSelftest() {
     await sleep(700)
     if (fullId !== b.id) report.errors.push('fullscreen did not engage')
     const fshot = await drift.snapshot(b.id, 1000)
-    if (fshot) await drift.selftestArtifact('selftest-fullscreen.png', fshot)
+    if (fshot) await drift.selftestArtifact('selftest-fullscreen.jpg', fshot)
     else report.errors.push('fullscreen snapshot failed')
     exitFullscreen()
     if (fullId) report.errors.push('fullscreen did not exit')
@@ -3271,24 +3357,45 @@ async function init() {
   scheduleLayout()
 
   // Refresh thumbnails one card at a time — capturing every live page in one
-  // tick causes a visible hitch while browsing.
+  // tick causes a visible hitch while browsing. Cards mid-playback are left
+  // alone: capturePage steals frames from the (software-decoded) video.
   let snapRR = 0
   setInterval(() => {
-    const live = [...cards.values()].filter(c => c.live)
+    // Muted autoplay loops can hold mediaPlaying forever — refresh even those
+    // once the thumbnail is 5+ minutes stale (one brief capture, not per-8s).
+    const live = [...cards.values()].filter(c =>
+      c.live && (!c.mediaPlaying || Date.now() - c.lastSnap > 300000))
     if (live.length) takeSnapshot(live[snapRR++ % live.length])
   }, 8000)
 
+  // Serializing the canvas (with every thumbnail) is multi-MB work on this
+  // thread — run it when the frame has idle headroom, never mid-gesture.
+  // Thumbnail-only changes (snapDirty) persist on blur or once a minute.
+  let lastSave = 0
+  const saveNow = () => {
+    dirty = false
+    snapDirty = false
+    lastSave = Date.now()
+    drift.saveState(serialize())
+  }
   setInterval(() => {
-    if (dirty && !HEADLESS) {
-      dirty = false
-      drift.saveState(serialize())
+    if (HEADLESS) return
+    if (dirty || (snapDirty && Date.now() - lastSave > 60000)) {
+      requestIdleCallback(() => { if (dirty || snapDirty) saveNow() }, { timeout: 2000 })
     }
   }, 2500)
+  // Renderer blur usually means "clicked into a page card" (focus handed to
+  // its webContents), not "app deactivated" — don't pay the full serialize
+  // inside that click. Real changes still flush; thumbnail-only changes keep
+  // the tick's 60s cadence.
   window.addEventListener('blur', () => {
-    if (dirty && !HEADLESS) {
-      dirty = false
-      drift.saveState(serialize())
-    }
+    if (HEADLESS) return
+    if (dirty) saveNow()
+    else if (snapDirty && Date.now() - lastSave > 60000) saveNow()
+  })
+  // Best-effort flush at teardown (quit/close): blur isn't guaranteed first.
+  window.addEventListener('pagehide', () => {
+    if (!HEADLESS && (dirty || snapDirty)) saveNow()
   })
 
   if (SELF) runSelftest()
