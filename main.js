@@ -7,6 +7,14 @@ const { app, BrowserWindow, WebContentsView, ipcMain, Menu, shell, dialog, sessi
 const path = require('path')
 const fs = require('fs')
 
+// Widevine DRM (Netflix, Disney+, etc.) needs a Content Decryption Module that
+// stock Electron doesn't ship. On the castlabs "Electron for Content Security"
+// build, `components` downloads/loads the Widevine CDM on first launch and we must
+// await it before opening any window. On stock Electron `components` is absent, so
+// this is a no-op and DRM sites simply won't play. See DRM-SETUP.md to enable it.
+let widevine = null
+try { widevine = require('electron').components } catch {}
+
 const SELFTEST = process.argv.includes('--selftest')
 const PROMO = process.argv.includes('--promoshot') // staged canvas for marketing shots
 
@@ -83,16 +91,19 @@ function wireView(id, view) {
   })
 }
 
-function createView(id, url) {
+function createView(id, url, opts = {}) {
   const view = new WebContentsView({
     webPreferences: {
       sandbox: true,
       partition: 'persist:drift'
     }
   })
-  views.set(id, { view, attached: false, zoom: null })
+  views.set(id, { view, attached: false, zoom: null, panel: !!opts.panel })
   wireView(id, view)
-  attachExtTab(view.webContents)
+  // A side-panel card hosts an extension's own UI page; it isn't a browsable tab,
+  // so don't register it with the extension system (keeps it out of chrome.tabs /
+  // debugger.getTargets, where an agentic extension shouldn't see its own panel).
+  if (!opts.panel) attachExtTab(view.webContents)
   view.webContents.loadURL(url).catch(() => {})
   return view
 }
@@ -107,12 +118,12 @@ function destroyView(id) {
 
 // ---------- IPC ----------
 
-ipcMain.handle('view:ensure', (_e, { id, url }) => {
+ipcMain.handle('view:ensure', (_e, { id, url, opts }) => {
   if (typeof id !== 'string') return { ok: false }
   if (views.has(id)) return { ok: true, created: false }
-  const u = safeUrl(url)
+  const u = viewUrl(url)
   if (!u) return { ok: false }
-  createView(id, u)
+  createView(id, u, opts || {})
   return { ok: true, created: true }
 })
 
@@ -120,7 +131,7 @@ ipcMain.handle('view:destroy', (_e, { id }) => { destroyView(id) })
 
 ipcMain.handle('view:load', (_e, { id, url }) => {
   const m = views.get(id)
-  const u = safeUrl(url)
+  const u = viewUrl(url)
   if (m && u) m.view.webContents.loadURL(u).catch(() => {})
 })
 
@@ -276,9 +287,51 @@ ipcMain.handle('settings:save', (_e, s) => {
 
 const { ElectronChromeExtensions } = require('electron-chrome-extensions')
 const { installChromeWebStore, uninstallExtension } = require('electron-chrome-web-store')
+const { setupExtShims } = require('./ext-shims')
 
 const driftSession = () => session.fromPartition('persist:drift')
 let extensions = null
+let extShims = null
+
+// Map a card's extension tab id (its webContents.id) back to the Drift card + view.
+function resolveTab(tabId) {
+  for (const [id, m] of views) {
+    const wc = m.view.webContents
+    if (!wc.isDestroyed() && wc.id === tabId) return { wc, driftId: id, view: m.view }
+  }
+  return null
+}
+
+// Extension manifest (for a side panel's default_path, etc.).
+function extManifest(extId) {
+  try {
+    const e = driftSession().extensions.getExtension(extId)
+    return e && e.manifest
+  } catch { return null }
+}
+
+// The set of live card pages, as chrome.debugger-style targets.
+function listExtTabs() {
+  const out = []
+  for (const [, m] of views) {
+    const wc = m.view.webContents
+    if (wc.isDestroyed()) continue
+    out.push({ tabId: wc.id, title: wc.getTitle(), url: wc.getURL() })
+  }
+  return out
+}
+
+// A card may host an installed extension's own page (a side panel). Allow those
+// URLs in addition to http(s) when creating/navigating a view.
+function isInstalledExtUrl(u) {
+  const m = /^chrome-extension:\/\/([a-p]{32})\//.exec(String(u || ''))
+  if (!m) return null
+  try {
+    const found = driftSession().extensions.getAllExtensions().some(e => e.id === m[1])
+    return found ? String(u) : null
+  } catch { return null }
+}
+function viewUrl(u) { return safeUrl(u) || isInstalledExtUrl(u) }
 
 // Map a webContents back to the card id the renderer knows it by.
 function idOfWebContents(wc) {
@@ -289,6 +342,34 @@ function idOfWebContents(wc) {
 async function setupExtensions() {
   const s = driftSession()
   try { ElectronChromeExtensions.handleCRXProtocol(s) } catch {}
+
+  // Register the chrome.* shim preload BEFORE constructing the library, so it runs
+  // first in each extension context and its additions survive the library freezing
+  // `chrome`. It injects for extension frames and MV3 service workers.
+  // The file is asarUnpack'd, so in a packaged build point at the real unpacked copy
+  // rather than the app.asar path (preloads must load from the filesystem).
+  let shimPath = path.join(__dirname, 'ext-shim-preload.js')
+  if (shimPath.includes(`app.asar${path.sep}`)) {
+    shimPath = shimPath.replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`)
+  }
+  if (!fs.existsSync(shimPath)) console.log('[drift] ext shim preload missing at ' + shimPath)
+  try {
+    if (typeof s.registerPreloadScript === 'function') {
+      s.registerPreloadScript({ id: 'drift-ext-shim-frame', type: 'frame', filePath: shimPath })
+      s.registerPreloadScript({ id: 'drift-ext-shim-sw', type: 'service-worker', filePath: shimPath })
+    } else {
+      s.setPreloads([shimPath, ...s.getPreloads()])
+    }
+  } catch (err) { console.log('[drift] ext shim preload registration failed: ' + err.message) }
+
+  extShims = setupExtShims({
+    session: s,
+    getWindow: () => win,
+    sendUI,
+    resolveTab,
+    getManifest: extManifest,
+    listTabs: listExtTabs
+  })
 
   extensions = new ElectronChromeExtensions({
     license: 'GPL-3.0',
@@ -314,6 +395,13 @@ async function setupExtensions() {
       if (id) sendUI('ext:removeTab', { id })
     }
   })
+
+  // Cards restored at boot can create their views before this setup finishes,
+  // so attachExtTab was a no-op for them — register every existing view now,
+  // then tell the renderer the extension system is live so it can mount the
+  // per-card action rows.
+  for (const [, m] of views) { try { extensions.addTab(m.view.webContents, win) } catch {} }
+  sendUI('ext:ready')
 
   // Enable Chrome Web Store install (with a permission confirmation) and load
   // any previously installed extensions.
@@ -358,6 +446,15 @@ async function setupExtensions() {
   } catch (err) {
     console.log('[drift] web store setup failed: ' + err.message)
   }
+
+  // Wake each extension's MV3 service worker so its event listeners (notably
+  // action.onClicked, which side-panel extensions use to open their panel) are
+  // registered before the user clicks — the library otherwise drops a click that
+  // arrives before any listener exists.
+  try {
+    const all = s.extensions.getAllExtensions().filter(e => e && e.id)
+    if (extShims) extShims.warmServiceWorkers(all)
+  } catch {}
 }
 
 // Register a card's page with the extension system so chrome.tabs sees it.
@@ -367,6 +464,16 @@ function attachExtTab(wc) {
 function selectExtTab(wc) {
   if (extensions && wc) { try { extensions.selectTab(wc) } catch {} }
 }
+
+// The renderer pins each card's <browser-action-list> to that card's tab id
+// (its webContents id), so extension clicks/badges act on that page rather
+// than whichever card is active.
+ipcMain.handle('ext:tabId', (_e, { id }) => {
+  const m = views.get(id)
+  return m && !m.view.webContents.isDestroyed() ? m.view.webContents.id : null
+})
+
+ipcMain.handle('ext:isReady', () => !!extensions)
 
 ipcMain.handle('ext:list', () => {
   try {
@@ -588,6 +695,14 @@ app.whenReady().then(async () => {
   // The time-machine history log was removed in v0.2.1 — clear any file a
   // previous build left behind.
   fs.promises.rm(path.join(app.getPath('userData'), 'drift-history.json'), { force: true }).catch(() => {})
+  // Load the Widevine CDM (castlabs build only) before any page can request it,
+  // so the first Netflix/Disney+ card doesn't race a missing decryption module.
+  if (widevine && !SELFTEST && !PROMO) {
+    try {
+      await widevine.whenReady()
+      console.log('[drift] Widevine ready: ' + (widevine.status ? widevine.status() : 'ok'))
+    } catch (err) { console.log('[drift] Widevine load failed: ' + err.message) }
+  }
   buildMenu()
   createWindow()
   // Set up the extension system + Chrome Web Store (skipped in headless runs).

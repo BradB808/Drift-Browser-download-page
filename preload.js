@@ -5,7 +5,7 @@ const { contextBridge, ipcRenderer } = require('electron')
 try { require('electron-chrome-extensions/browser-action') } catch (err) { /* extensions optional */ }
 
 contextBridge.exposeInMainWorld('drift', {
-  ensureView: (id, url) => ipcRenderer.invoke('view:ensure', { id, url }),
+  ensureView: (id, url, opts) => ipcRenderer.invoke('view:ensure', { id, url, opts }),
   destroyView: (id) => ipcRenderer.invoke('view:destroy', { id }),
   loadURL: (id, url) => ipcRenderer.invoke('view:load', { id, url }),
   navAction: (id, action) => ipcRenderer.invoke('view:nav', { id, action }),
@@ -29,9 +29,13 @@ contextBridge.exposeInMainWorld('drift', {
   extList: () => ipcRenderer.invoke('ext:list'),
   extRemove: (id) => ipcRenderer.invoke('ext:remove', id),
   extOpenStore: () => ipcRenderer.invoke('ext:openStore'),
+  extTabId: (id) => ipcRenderer.invoke('ext:tabId', { id }),
+  extIsReady: () => ipcRenderer.invoke('ext:isReady'),
+  onExtReady: (fn) => ipcRenderer.on('ext:ready', () => fn()),
   onViewEvent: (fn) => ipcRenderer.on('view:event', (_e, d) => fn(d)),
   onUIKey: (fn) => ipcRenderer.on('ui:key', (_e, d) => fn(d)),
   onUpdateAvailable: (fn) => ipcRenderer.on('update:available', (_e, d) => fn(d)),
+  onExtOpenSidePanel: (fn) => ipcRenderer.on('ext:openSidePanel', (_e, d) => fn(d)),
   onExtAdoptTab: (fn) => ipcRenderer.on('ext:adoptTab', (_e, d) => fn(d)),
   onExtSelectTab: (fn) => ipcRenderer.on('ext:selectTab', (_e, d) => fn(d)),
   onExtRemoveTab: (fn) => ipcRenderer.on('ext:removeTab', (_e, d) => fn(d)),

@@ -339,6 +339,30 @@ function setActive(id) {
 function closeCard(id) {
   const c = cards.get(id)
   if (!c) return
+  if (c.isPanel) {
+    // Transient extension UI — forget it (so it can reopen) and don't push it onto
+    // the reopen stack.
+    for (const [k, v] of panelCards) if (v === id) panelCards.delete(k)
+    if (c.viewCreated) drift.destroyView(id)
+    unmountCardExtActions(c)
+    c.el.remove()
+    cards.delete(id)
+    for (let i = edges.length - 1; i >= 0; i--) {
+      if (edges[i].from === id || edges[i].to === id) removeEdgeEl(edges[i]), edges.splice(i, 1)
+    }
+    if (activeId === id) activeId = null
+    if (prevActiveId === id) prevActiveId = null
+    if (fullId === id) exitFullscreen()
+    hitSet.delete(id)
+    updateEmpty()
+    scheduleLayout()
+    return
+  }
+  // Closing a page also closes any side panels bound to it, so they don't linger
+  // as dead UI pointing at a destroyed tab.
+  const orphanPanels = []
+  for (const [k, panelId] of panelCards) if (k.endsWith('|' + id) && cards.has(panelId)) orphanPanels.push(panelId)
+  orphanPanels.forEach(pid => closeCard(pid))
   // Remember it (with its trail partners) so "Reopen closed card" can undo this.
   const links = []
   for (const e of edges) {
@@ -959,10 +983,11 @@ async function goLive(c) {
   c.live = true
   if (!c.viewCreated) {
     c.viewCreated = true
-    const res = await drift.ensureView(c.id, c.url)
+    const res = await drift.ensureView(c.id, c.url, { panel: !!c.isPanel })
     if (!res || !res.ok) { c.viewCreated = false; c.live = false; return }
   }
   c.viewReady = true
+  if (!c.isPanel) mountCardExtActions(c) // panels are an extension's own UI, not a tab with actions
   scheduleLayout()
 }
 
@@ -979,12 +1004,15 @@ function pruneViews() {
   const alive = [...cards.values()].filter(c => c.viewCreated)
   if (alive.length <= KEEP_ALIVE) return
   alive
-    .filter(c => !c.live && !c.retiring)
+    // Never evict a side panel's view: it hosts a live extension surface (and any
+    // chrome.debugger/CDP session driving its page dies with the webContents).
+    .filter(c => !c.live && !c.retiring && !c.isPanel)
     .sort((a, b) => a.lastActive - b.lastActive)
     .slice(0, alive.length - KEEP_ALIVE)
     .forEach(c => {
       c.viewCreated = false
       c.viewReady = false
+      unmountCardExtActions(c) // its tab id dies with the view
       drift.destroyView(c.id)
     })
 }
@@ -1095,6 +1123,43 @@ function adoptCard(id, url) {
   const c = createCard({ id, url: url || 'about:blank', x, y, w, h })
   c.viewCreated = true
   c.viewReady = true
+  mountCardExtActions(c)
+  setActive(c.id)
+  flashCard(c)
+  ensureVisible(c)
+  scheduleLayout()
+  return c
+}
+
+// Open an extension's side panel as a card docked beside the page it belongs to,
+// linked by a trail. Side-panel extensions (e.g. Claude) call chrome.sidePanel.open
+// from their action's onClicked handler; main forwards it here.
+const panelCards = new Map() // key `${extId}|${pageId}` -> panel card id
+
+function openSidePanelCard({ extId, driftId, url }) {
+  const page = driftId ? cards.get(driftId) : cards.get(activeId)
+  const key = extId + '|' + (page ? page.id : 'global')
+  const existingId = panelCards.get(key)
+  if (existingId && cards.has(existingId)) {
+    const ex = cards.get(existingId)
+    if (ex.url !== url) navigateCard(ex, url) // tab changed: point the panel at the new page
+    setActive(ex.id); drift.raise(ex.id); flashCard(ex); ensureVisible(ex)
+    return ex
+  }
+  const w = 420
+  const h = page ? page.h : 600
+  let x, y
+  if (page) { x = page.x + page.w + 40; y = page.y } else {
+    const p = toWorld(innerWidth / 2, TOOLBAR + (innerHeight - TOOLBAR) / 2)
+    x = p.x - w / 2; y = p.y - h / 2
+  }
+  ;[x, y] = findFreeSpot(x, y, w, h)
+  const c = createCard({ url, x, y, w, h })
+  c.isPanel = true
+  c.panelExtId = extId
+  c.el.classList.add('panel')
+  if (page) addEdge(page.id, c.id)
+  panelCards.set(key, c.id)
   setActive(c.id)
   flashCard(c)
   ensureVisible(c)
@@ -1311,7 +1376,8 @@ function tidy() {
   const comps = []
   for (const id of cards.keys()) {
     if (seenG.has(id)) continue
-    const comp = [...trailOf(id)].filter(x => cards.has(x))
+    if (cards.get(id).isPanel) continue // side panels are laid out beside their page, not as tree nodes
+    const comp = [...trailOf(id)].filter(x => cards.has(x) && !cards.get(x).isPanel)
     for (const x of comp) seenG.add(x)
     comps.push(comp)
   }
@@ -1359,6 +1425,14 @@ function tidy() {
       colY.set(d, (colY.get(d) || 0) + c.h + GY)
     }
     cy += Math.max(0, ...colY.values()) - GY + COMP_GAP
+  }
+  // Re-dock each open side panel beside the page it belongs to.
+  for (const [key, panelId] of panelCards) {
+    const panel = cards.get(panelId)
+    if (!panel || !panel.isPanel) continue
+    const pageId = key.slice(key.indexOf('|') + 1)
+    const page = cards.get(pageId)
+    if (page) animateCard(panel, page.x + page.w + 40, page.y, 380)
   }
   markDirty()
   setTimeout(fitAll, 400)
@@ -2297,7 +2371,7 @@ async function renderSettingsPanel() {
   // ---- Extensions ----
   body.appendChild(vEl('div', 'setsec', 'Extensions'))
   body.appendChild(vEl('div', 'setnote',
-    'Install extensions from the Chrome Web Store — they apply to every tab, and their icons appear in the toolbar. Some newer extensions may not fully work yet.'))
+    'Install extensions from the Chrome Web Store. Icons appear in the toolbar and on each card’s header — click the one on a card to use the extension on that page. Some newer extensions may not fully work yet.'))
   const store = vEl('button', 'setbtn', '🧩 Browse the Chrome Web Store')
   store.addEventListener('click', () => { drift.extOpenStore(); closeSettingsPanel() })
   body.appendChild(store)
@@ -2491,11 +2565,16 @@ drift.onUpdateAvailable(({ version }) => {
 
 // Extension tab lifecycle (chrome.tabs.* and Web Store).
 drift.onExtAdoptTab(({ id, url }) => adoptCard(id, url))
+drift.onExtOpenSidePanel(d => openSidePanelCard(d))
 drift.onExtSelectTab(({ id }) => {
   const c = cards.get(id)
   if (c) { setActive(id); drift.raise(id); ensureVisible(c) }
 })
 drift.onExtRemoveTab(({ id }) => { if (cards.has(id)) closeCard(id) })
+drift.onExtReady(() => {
+  extReady = true
+  for (const c of cards.values()) mountCardExtActions(c)
+})
 drift.onSpawnUrl(({ url }) => { const c = newCard(url); if (c) flashCard(c) })
 
 drift.onUIKey(({ key }) => {
@@ -2710,7 +2789,9 @@ function serialize() {
     v: 2,
     seq,
     view: { ...V },
-    cards: [...cards.values()].map(c => ({
+    // Extension side-panel cards host a chrome-extension:// page bound to a live
+    // tab id; they're transient UI, not saved artifacts, so they're never persisted.
+    cards: [...cards.values()].filter(c => !c.isPanel).map(c => ({
       id: c.id, url: c.url, title: c.title, fav: c.fav,
       x: c.x, y: c.y, w: c.w, h: c.h,
       snapshot: c.snapshot, createdAt: c.createdAt, lastActive: c.lastActive
@@ -2718,7 +2799,10 @@ function serialize() {
     zones: [...zones.values()].map(z => ({
       id: z.id, name: z.name, x: z.x, y: z.y, w: z.w, h: z.h, color: z.color
     })),
-    edges: edges.map(e => ({ ...e }))
+    edges: edges.filter(e => {
+      const a = cards.get(e.from), b = cards.get(e.to)
+      return (!a || !a.isPanel) && (!b || !b.isPanel)
+    }).map(e => ({ ...e }))
   }
 }
 
@@ -3083,9 +3167,57 @@ function mountExtActions() {
   $('#extslot').replaceWith(el)
 }
 
+// ---------- per-card extension actions ----------
+// Each live card gets its own <browser-action-list> pinned to its tab id, so
+// extension icons/badges reflect THAT page and a click opens the extension on
+// that specific card (the popup anchors next to the icon). This is what makes
+// an extension usable in one tab rather than only via the global toolbar row.
+
+let extReady = false
+
+function mountCardExtActions(c) {
+  if (HEADLESS || !extReady || !c.viewCreated || !c.el) return
+  if (!('customElements' in window) || !customElements.get('browser-action-list')) return
+  drift.extTabId(c.id).then(tabId => {
+    // The view may have been pruned (or replaced) while we awaited the id.
+    if (tabId == null || !c.viewCreated || !c.el || !cards.has(c.id)) return
+    if (c.extEl && c.extEl.getAttribute('tab') === String(tabId)) return
+    unmountCardExtActions(c)
+    const el = document.createElement('browser-action-list')
+    el.className = 'cardext'
+    el.setAttribute('partition', 'persist:drift')
+    el.setAttribute('tab', String(tabId))
+    // Clicking an icon acts on this card — make it active, but never start a
+    // header drag (the shadow-DOM buttons don't match the .head button guard).
+    el.addEventListener('mousedown', e => {
+      e.stopPropagation()
+      setActive(c.id)
+      drift.raise(c.id)
+    })
+    el.addEventListener('dblclick', e => e.stopPropagation())
+    const head = c.el.querySelector('.head')
+    head.insertBefore(el, head.querySelector('.b-reload'))
+    c.extEl = el
+  }).catch(() => {})
+}
+
+function unmountCardExtActions(c) {
+  if (c.extEl) { c.extEl.remove(); c.extEl = null }
+}
+
 async function init() {
   wireGlobalInput()
   mountExtActions()
+  // The extension system may have come up before this renderer did (the
+  // ext:ready broadcast would then be missed) — ask once at boot too.
+  if (!HEADLESS) {
+    drift.extIsReady().then(r => {
+      if (r && !extReady) {
+        extReady = true
+        for (const c of cards.values()) mountCardExtActions(c)
+      }
+    }).catch(() => {})
+  }
   if (!HEADLESS) {
     try {
       const s = await drift.settingsLoad()

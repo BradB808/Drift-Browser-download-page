@@ -9,7 +9,9 @@
     "start": "electron .",
     "selftest": "electron . --selftest",
     "promoshot": "electron . --promoshot",
-    "dist": "electron-builder --mac --win"
+    "dist": "electron-builder --mac --win",
+    "drm:enable": "npm install \"github:castlabs/electron-releases#v37.10.3+wvcus\" --save-dev",
+    "drm:sign-dev": "python3 -m castlabs_evs.vmp sign-pkg node_modules/electron/dist"
   },
   "devDependencies": {
     "electron": "^37.0.0",
@@ -25,10 +27,13 @@
     "files": [
       "main.js",
       "preload.js",
+      "ext-shims.js",
+      "ext-shim-preload.js",
       "renderer/**/*",
       "node_modules/**/*"
     ],
     "asarUnpack": [
+      "ext-shim-preload.js",
       "node_modules/electron-chrome-extensions/**",
       "node_modules/electron-chrome-web-store/**"
     ],

@@ -290,6 +290,30 @@ body.nobg #bgimg { display: none; }
 
 .card .fav { flex: none; width: 15px; height: 15px; border-radius: 4px; }
 
+/* Per-card extension icon row: pinned to this card's tab, sized to sit
+   alongside the .nb header buttons. */
+.card .cardext {
+  flex: none;
+  display: flex;
+  align-items: center;
+  --browser-action-hover-bg: rgba(255, 255, 255, 0.1);
+}
+.card .cardext::part(action) {
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  background-size: 78%;
+  cursor: pointer;
+}
+
+/* Extension side-panel cards read as a docked companion to their page. */
+.card.panel {
+  box-shadow: 0 0 0 1px var(--accent-dim), 0 24px 70px rgba(0, 0, 0, 0.5);
+}
+.card.panel .head {
+  background: linear-gradient(90deg, rgba(255, 180, 105, 0.12), rgba(255, 111, 145, 0.10));
+}
+
 .card .ctitle {
   flex: 1;
   min-width: 0;
