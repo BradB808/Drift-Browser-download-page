@@ -27,7 +27,7 @@ DMG (`dist/Drift-mac-arm64.dmg`) plays Netflix/Disney+.
 | `npm run drm:enable`   | install the castlabs Widevine Electron build + repair framework symlinks |
 | `npm run drm:fix`      | re-run the symlink repair (after any `npm install`) |
 | `npm run drm:sign-dev` | VMP-sign the local Electron so `npm start` streams |
-| `npm run drm:dist`     | build the signed, DRM-capable Apple Silicon DMG |
+| `npm run drm:dist`     | build signed, DRM-capable DMGs for **both** Mac arches (arm64 + x64) |
 | `npm run drm:verify`   | confirm the CDM loads and a Widevine MediaKeys can be created |
 
 ## Rebuilding from scratch (e.g. after `npm install`)
@@ -46,11 +46,16 @@ python3 -m castlabs_evs.account reauth
 To set it up on a fresh machine: `pip3 install --user castlabs-evs` then
 `python3 -m castlabs_evs.account signup`.
 
+## Architectures
+`npm run drm:dist` (→ `build/drm-dist.js`) builds **both** DMGs — Apple Silicon
+(`Drift-mac-arm64.dmg`) and Intel (`Drift-mac-x64.dmg`) — fetching each arch's castlabs
+Widevine dist, extracting with `ditto` (preserves framework symlinks), and VMP-signing
+each packaged app. Both carry valid production streaming signatures. Note: the x64 build
+can't be *runtime*-smoke-tested on an Apple Silicon dev machine without Rosetta 2, but it's
+the official castlabs x64 Widevine build with identical code + signing to the arm64 build,
+which is fully runtime-verified.
+
 ## Known limitations / follow-ups
-- **Apple Silicon (arm64) only, for now.** `drm:dist` builds arm64 because it packages
-  the locally-installed Widevine Electron (which is one architecture). An Intel (x64)
-  DRM DMG needs the x64 castlabs build installed and a separate `--x64` build; the
-  previous stock x64 DMG was removed rather than shipped as a broken/no-DRM artifact.
 - **Resolution is capped ~720p** — the software Widevine CDM (L3), same as desktop Chrome;
   1080p/4K are reserved for hardware DRM.
 - **Disney+ may need a Chrome user agent** (else "error code 83"). Drift already strips
