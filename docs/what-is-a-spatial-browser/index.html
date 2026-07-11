@@ -1,0 +1,468 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>What Is a Spatial Browser? Maps, Not Tabs, Explained</title>
+<meta name="description" content="A spatial browser lays pages out as cards on an infinite canvas instead of a tab strip. How spatial browsing works and why it suits research and deep work.">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Drift Browser">
+<meta property="og:title" content="What Is a Spatial Browser? Maps, Not Tabs, Explained">
+<meta property="og:description" content="A spatial browser lays pages out as cards on an infinite canvas instead of a tab strip. How spatial browsing works and why it suits research and deep work.">
+<meta property="og:url" content="https://driftwebbrowser.com/what-is-a-spatial-browser/">
+<meta property="og:image" content="https://driftwebbrowser.com/assets/promo.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="What Is a Spatial Browser? Maps, Not Tabs, Explained">
+<meta name="twitter:description" content="A spatial browser lays pages out as cards on an infinite canvas instead of a tab strip. How spatial browsing works and why it suits research and deep work.">
+<meta name="twitter:image" content="https://driftwebbrowser.com/assets/promo.png">
+<link rel="canonical" href="https://driftwebbrowser.com/what-is-a-spatial-browser/">
+<link rel="icon" href="../assets/icon.png">
+<link rel="apple-touch-icon" href="../assets/icon.png">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "headline": "What Is a Spatial Browser? Maps, Not Tabs, Explained",
+  "description": "A spatial browser lays pages out as cards on an infinite canvas instead of a tab strip. How spatial browsing works and why it suits research and deep work.",
+  "datePublished": "2026-07-10",
+  "dateModified": "2026-07-10",
+  "author": { "@type": "Person", "name": "Brad Brunton", "url": "https://github.com/BradB808" },
+  "image": "https://driftwebbrowser.com/assets/promo.png",
+  "mainEntityOfPage": "https://driftwebbrowser.com/what-is-a-spatial-browser/",
+  "publisher": { "@type": "Organization", "name": "Drift Browser", "url": "https://driftwebbrowser.com/" }
+}
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #1b1b1f;
+    --gray: #585866;
+    --faint: #f4f4f6;
+    --line: #1b1b1f;
+    --orange: #ff5c0a;
+    --orange2: #ff2e63;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: #ffffff;
+    color: var(--ink);
+    font-family: "Poppins", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+  .serif { font-family: "Fraunces", Georgia, serif; }
+  .wrap { max-width: 1240px; margin: 0 auto; padding: 0 clamp(20px, 4vw, 56px); }
+
+  /* ---------- nav ---------- */
+  nav {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: rgba(255, 255, 255, 0.92);
+    backdrop-filter: blur(14px);
+    border-bottom: 1px solid rgba(27, 27, 31, 0.08);
+  }
+  nav .row { display: flex; align-items: center; gap: 26px; height: 72px; }
+  .brand { display: flex; align-items: center; gap: 11px; font-weight: 700; letter-spacing: 0.14em; font-size: 15px; color: var(--ink); text-decoration: none; }
+  .brand img { height: 34px; border-radius: 8px; }
+  nav .links { margin-left: auto; display: flex; gap: 26px; align-items: center; }
+  nav .links a { color: var(--ink); text-decoration: none; font-size: 14.5px; font-weight: 500; }
+  nav .links a:hover { color: var(--orange); }
+  /* Liquid glass CTA, matching Drift's in-app toolbar */
+  .pill {
+    position: relative;
+    overflow: hidden;
+    display: inline-block;
+    background: linear-gradient(135deg,
+      rgba(44, 37, 52, 0.94) 0%,
+      rgba(23, 19, 29, 0.9) 45%,
+      rgba(40, 31, 46, 0.92) 100%);
+    color: #fff !important;
+    font-weight: 600;
+    padding: 11px 24px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    box-shadow: 0 10px 26px rgba(27, 27, 31, 0.28),
+      inset 0 1px 0 rgba(255, 255, 255, 0.35),
+      inset 0 -1px 1px rgba(255, 255, 255, 0.08);
+    text-decoration: none;
+    transition: transform 0.12s ease, box-shadow 0.15s ease, filter 0.15s ease;
+  }
+  .pill::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: radial-gradient(130% 70% at 22% -20%, rgba(255, 255, 255, 0.35), transparent 55%);
+    pointer-events: none;
+  }
+  .pill:hover {
+    transform: translateY(-1px);
+    filter: brightness(1.15);
+    box-shadow: 0 14px 34px rgba(27, 27, 31, 0.36),
+      inset 0 1px 0 rgba(255, 255, 255, 0.4),
+      inset 0 -1px 1px rgba(255, 255, 255, 0.08);
+    color: #fff;
+  }
+  .btn-main {
+    position: relative;
+    overflow: hidden;
+    display: inline-block;
+    background: linear-gradient(135deg,
+      rgba(44, 37, 52, 0.95) 0%,
+      rgba(23, 19, 29, 0.92) 45%,
+      rgba(40, 31, 46, 0.94) 100%);
+    color: #fff;
+    font-weight: 600;
+    font-size: 18px;
+    padding: 17px 36px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    text-decoration: none;
+    transition: transform 0.12s ease, box-shadow 0.15s ease, filter 0.15s ease;
+    box-shadow: 0 14px 36px rgba(27, 27, 31, 0.3),
+      inset 0 1.5px 0 rgba(255, 255, 255, 0.38),
+      inset 0 -1px 1px rgba(255, 255, 255, 0.08);
+  }
+  .btn-main::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: radial-gradient(130% 70% at 22% -20%, rgba(255, 255, 255, 0.32), transparent 55%);
+    pointer-events: none;
+  }
+  .btn-main:hover {
+    transform: translateY(-2px);
+    filter: brightness(1.15);
+    box-shadow: 0 20px 46px rgba(27, 27, 31, 0.38),
+      inset 0 1.5px 0 rgba(255, 255, 255, 0.42),
+      inset 0 -1px 1px rgba(255, 255, 255, 0.08);
+  }
+
+  /* ---------- article header ---------- */
+  header.article-hero { padding: clamp(44px, 6vw, 84px) 0 clamp(18px, 2.5vw, 30px); }
+  header.article-hero h1 {
+    font-family: "Fraunces", Georgia, serif;
+    font-weight: 700;
+    font-size: clamp(40px, 6.6vw, 84px);
+    line-height: 1.02;
+    letter-spacing: -0.015em;
+    max-width: 900px;
+  }
+  header.article-hero .standfirst {
+    margin-top: 26px;
+    font-size: clamp(18px, 2.2vw, 24px);
+    font-weight: 600;
+    line-height: 1.5;
+    max-width: 780px;
+  }
+  header.article-hero .meta {
+    margin-top: 18px;
+    font-size: 13.5px;
+    color: var(--gray);
+  }
+  header.article-hero .meta a { color: var(--gray); }
+
+  /* ---------- screenshot ---------- */
+  .shot { position: relative; padding: clamp(24px, 3.5vw, 44px) 0 10px; }
+  .shot .frame {
+    border: 1.5px solid var(--ink);
+    border-radius: 24px;
+    overflow: hidden;
+    box-shadow: 0 30px 80px rgba(27, 27, 31, 0.12);
+    background: #0d0b10;
+  }
+  .shot img { width: 100%; display: block; }
+  .shot .cap { margin-top: 14px; font-size: 13.5px; color: var(--gray); text-align: center; }
+
+  /* ---------- article body ---------- */
+  article.prose { padding: clamp(28px, 4vw, 52px) 0 0; }
+  article.prose .inner { max-width: 820px; }
+  article.prose h2 {
+    font-family: "Fraunces", Georgia, serif;
+    font-weight: 700;
+    font-size: clamp(30px, 4vw, 46px);
+    line-height: 1.08;
+    letter-spacing: -0.01em;
+    margin: clamp(36px, 5vw, 56px) 0 16px;
+  }
+  article.prose h3 {
+    font-size: clamp(17px, 2vw, 20px);
+    font-weight: 600;
+    margin: 28px 0 10px;
+  }
+  article.prose p {
+    font-size: 16px;
+    line-height: 1.75;
+    margin: 0 0 18px;
+    color: #3c3947;
+  }
+  article.prose ul { margin: 0 0 18px 22px; }
+  article.prose li { font-size: 16px; line-height: 1.75; color: #3c3947; margin-bottom: 8px; }
+  article.prose li::marker { color: var(--orange); }
+  article.prose a { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; font-weight: 500; }
+  article.prose a:hover { color: var(--orange); }
+  article.prose strong { color: var(--ink); }
+  .keyline {
+    border: 1.5px solid var(--ink);
+    border-radius: 24px;
+    padding: clamp(24px, 4vw, 40px);
+    margin: 30px 0;
+    background: var(--faint);
+  }
+  .keyline p { margin: 0; font-size: clamp(16px, 1.9vw, 19px); font-weight: 600; line-height: 1.6; color: var(--ink); }
+
+  /* ---------- related + CTA cards ---------- */
+  section.related { padding: clamp(36px, 5vw, 60px) 0 0; }
+  .dl-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+  .dl {
+    border: 1.5px solid var(--ink);
+    border-radius: 20px;
+    padding: 30px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .dl h3 { font-size: 17.5px; }
+  .dl .sub2 { font-size: 13.5px; color: var(--gray); }
+  .dl a.get {
+    margin-top: 14px;
+    align-self: flex-start;
+    display: inline-block;
+    padding: 12px 26px;
+    border-radius: 999px;
+    background: var(--ink);
+    color: #fff;
+    font-weight: 600;
+    font-size: 14.5px;
+    text-decoration: none;
+    transition: background 0.15s ease;
+  }
+  .dl a.get:hover { background: linear-gradient(90deg, var(--orange), var(--orange2)); }
+
+  section.download { padding: clamp(40px, 5.5vw, 72px) 0 clamp(60px, 7vw, 100px); }
+  .cta-card {
+    border: 1.5px solid var(--ink);
+    border-radius: 24px;
+    padding: clamp(30px, 5vw, 64px);
+    text-align: left;
+  }
+  .cta-card h2 {
+    font-family: "Fraunces", Georgia, serif;
+    font-weight: 700;
+    font-size: clamp(32px, 4.6vw, 56px);
+    line-height: 1.05;
+  }
+  .cta-card p { margin: 16px 0 28px; font-size: 15.5px; line-height: 1.7; color: var(--gray); max-width: 640px; }
+
+  footer {
+    border-top: 1px solid rgba(27, 27, 31, 0.1);
+    padding: 26px 0;
+    color: var(--gray);
+    font-size: 13.5px;
+  }
+  footer .row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  footer a { color: var(--ink); text-decoration: none; font-weight: 500; }
+  footer .right { margin-left: auto; }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap row">
+    <a class="brand" href="../"><img src="../assets/icon.png" alt="Drift">DRIFT</a>
+    <div class="links">
+      <a href="../#features">Features</a>
+      <a href="https://github.com/BradB808/Drift-Browser-download-page">GitHub</a>
+      <a class="pill" href="../#download">Get Drift</a>
+    </div>
+  </div>
+</nav>
+
+<header class="article-hero">
+  <div class="wrap">
+    <h1 class="serif">What is a spatial browser?</h1>
+    <p class="standfirst">A spatial browser lays your open pages out as cards on a big
+      zoomable canvas instead of lining them up in a tab strip. Your session stops being
+      a row of shrinking labels and becomes a map.</p>
+    <p class="meta">By <a href="https://github.com/BradB808">Brad Brunton</a> · Updated July 10, 2026</p>
+  </div>
+</header>
+
+<div class="shot">
+  <div class="wrap">
+    <div class="frame">
+      <img src="../assets/promo.png" loading="lazy"
+        alt="The Drift spatial browser showing a biology research session: Cell, DNA, Mitochondria, CRISPR, Evolution and Photosynthesis pages laid out as connected cards on an infinite canvas">
+    </div>
+    <p class="cap">A research session in Drift. Every card is a live page, and the trails between them are the path the reading actually took.</p>
+  </div>
+</div>
+
+<article class="prose">
+  <div class="wrap">
+    <div class="inner">
+
+      <p>In a spatial browser, every page you open gets a <strong>place</strong>, not just a
+        position in a queue. Pages sit as cards on an infinite canvas. Related pages sit near
+        each other. The links between them are drawn on screen as visible trails rather than
+        buried in a history menu. Zoom out and the whole session becomes a constellation of
+        live thumbnails you can read at a glance; zoom in and any card is a full, working
+        browser page. <a href="../">Drift</a> is a free, open-source browser built entirely
+        around this idea, and it is the easiest way to feel the difference for yourself.</p>
+
+      <h2 class="serif">Where tabs came from</h2>
+      <p>Tabs deserve some credit. When they went mainstream in the early 2000s they were a real
+        improvement: instead of juggling a separate window for every page, you got one tidy
+        strip along the top, borrowed from the paper filing cabinet. For light browsing they
+        still work beautifully. Open your mail, a couple of articles, a video, and a tab
+        strip is exactly the right tool.</p>
+      <p>The strain shows up when browsing turns into thinking. Somewhere past ten or so
+        open pages, the labels shrink until only favicons remain, and the strip stops telling
+        you anything. Every page is squeezed into an identical little rectangle in a single
+        row, regardless of what it is or why you opened it. The strip is one-dimensional, so
+        it cannot show that these four pages belong to the same question, or that this one
+        led you to that one. That relationship exists, but the browser hides it in a history
+        list you almost never open.</p>
+
+      <h2 class="serif">Why space fits the way you think</h2>
+      <p>The case for spatial browsing rests on something you already use every day:
+        <strong>spatial memory</strong>. You remember <em>where</em> things are with
+        remarkably little effort. You know which shelf the coffee is on, which pocket holds
+        your keys, and roughly where on a messy desk the important letter is sitting. Memory
+        athletes exploit the same faculty when they place facts inside an imagined building
+        and walk through it later.</p>
+      <p>A tab strip gives spatial memory almost nothing to hold on to, because every tab
+        occupies the same kind of slot and the slots shift as tabs open and close. A canvas
+        gives it everything. When the flight comparison lives at the top left, the hotel
+        research just below it, and the half-read longform piece off on its own to the
+        right, finding a page again is not an act of recall. It is an act of looking. You
+        remember the place, and the place stays put.</p>
+      <div class="keyline">
+        <p>A tab asks “which of these identical rectangles was it?” A map asks “where did
+          I leave it?” The second question is the one human brains are built to answer.</p>
+      </div>
+
+      <h2 class="serif">Sessions as maps, history as trails</h2>
+      <p>The second thing a spatial browser changes is what happens to your path. In a tab
+        browser, the route you took through the web evaporates as you go. In a spatial
+        browser, it stays visible. When a link in one page would normally open “a new tab,”
+        Drift spawns a child card with a trail drawn back to the parent. An afternoon of
+        reading leaves behind a branching map: here is the question you started with, here
+        are the three directions it split into, here is the dead end and the detour that
+        turned out to matter.</p>
+      <p>Because the structure is drawn rather than logged, you can also edit it. In Drift
+        you can draw a trail yourself by dragging between two cards, remove one with a
+        double-click, and export any trail as a Markdown reading list to paste into your
+        notes. The map is yours, not a record kept about you.</p>
+
+      <h2 class="serif">What that changes in practice</h2>
+      <h3>Research</h3>
+      <p>Real research branches. One paper cites three more, a search fans out into a dozen
+        candidates, and the whole point is to compare and connect. On a canvas the branching
+        is the layout: strong sources migrate together, weak ones drift to the edge, and the
+        shape of the reading tells you where you have been thorough and where you have only
+        skimmed. When it is time to write up, the trail is already a reading list.</p>
+      <h3>Planning</h3>
+      <p>Planning a trip means flights, three hotel candidates, a map, a museum's opening
+        hours, and a friend's recommendations, all open at once and all related. In Drift
+        you can select that region of canvas and name it as a <strong>zone</strong>, such as
+        “Trip planning,” give it a color, and move the whole cluster as one unit. The project
+        stays parked exactly where you left it, laid out and ready, even weeks later.</p>
+      <h3>Writing</h3>
+      <p>Writers live in the space between sources and draft. A spatial browser lets you
+        keep the draft in the middle and the sources arranged around it in view, instead of
+        flipping between tabs by memory. When you need depth rather than breadth, Drift lets
+        you focus one card, pin two side by side to compare, or go full screen; Esc floats
+        you back out to the map.</p>
+
+      <h2 class="serif">How Drift puts the idea to work</h2>
+      <p>Drift is a spatial web browser for macOS, free and open source under GPL-3.0. It is
+        built on Electron, so every card runs on the same Chromium engine you already trust:
+        logins, video, and web apps all behave exactly as expected. The spatial layer sits
+        on top:</p>
+      <ul>
+        <li><strong>Infinite canvas.</strong> Pan, pinch, and fly. Cmd+0 fits your whole
+          session on screen, and Cmd+F highlights search matches right on the canvas.</li>
+        <li><strong>Visible trails.</strong> New pages arrive as child cards linked to their
+          parent. Draw or remove trails yourself, and export any trail as Markdown.</li>
+        <li><strong>Zones.</strong> Name a region, recolor it, move it as one unit.</li>
+        <li><strong>Focus modes.</strong> One card, two pinned side by side, or full
+          screen, with Esc to float back out.</li>
+        <li><strong>The essentials.</strong> Star pages into bookmark folders, import
+          bookmarks from Chrome, Brave, or Firefox, and install Chrome extensions such as ad
+          blockers straight from the Chrome Web Store. Rotating photo backdrops, a solid
+          color, or your own image keep the canvas feeling like yours.</li>
+        <li><strong>Privacy by default.</strong> No accounts, no sync servers, and no
+          browsing-history log. Everything stays on your machine, and a right-click reopens
+          a card you closed by accident.</li>
+      </ul>
+      <p>If you are wondering what everyday browsing feels like once the strip is gone
+        entirely, we wrote a companion piece on using
+        <a href="../browser-without-tabs/">a browser without tabs</a>. And if you came to
+        spatial browsing by way of Arc and miss a browser willing to rethink its own
+        surface, see how Drift compares as an
+        <a href="../arc-browser-alternative/">Arc browser alternative</a>.</p>
+
+      <h2 class="serif">The short version</h2>
+      <p>A spatial browser treats your browsing session as a map instead of a list: pages
+        are cards on a zoomable canvas, connections are visible trails, and projects are
+        zones you arrange and return to. It is not a replacement for every quick errand on
+        the web. It is a better fit for the sessions that matter, the ones where you are
+        researching, planning, or writing, and the browser's job is to help you think.</p>
+
+    </div>
+  </div>
+</article>
+
+<section class="related">
+  <div class="wrap">
+    <div class="dl-grid">
+      <div class="dl">
+        <h3>A browser without tabs</h3>
+        <div class="sub2">What day-to-day browsing looks like when tab overload isn't a given.</div>
+        <a class="get" href="../browser-without-tabs/">See how it works</a>
+      </div>
+      <div class="dl">
+        <h3>Looking for an Arc alternative?</h3>
+        <div class="sub2">How Drift compares for people who loved Arc's ideas.</div>
+        <a class="get" href="../arc-browser-alternative/">Compare</a>
+      </div>
+      <div class="dl">
+        <h3>Meet Drift</h3>
+        <div class="sub2">The free, open-source spatial browser for macOS.</div>
+        <a class="get" href="../">Back to the overview</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="download" id="download">
+  <div class="wrap">
+    <div class="cta-card">
+      <h2 class="serif">Try spatial browsing yourself</h2>
+      <p>Drift is free, open source, and runs on both Apple Silicon and Intel Macs, with a
+        Windows build coming soon. The macOS builds are currently unsigned, so Gatekeeper
+        will ask once: right-click the app and choose Open, then “Open Anyway.” After that,
+        the canvas is yours.</p>
+      <a class="btn-main" href="../#download">Download Drift for macOS</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap row">
+    <span>◍ Drift, a spatial web browser.</span>
+    <a href="../">Home</a>
+    <a href="../browser-without-tabs/">No tabs</a>
+    <a href="../arc-browser-alternative/">Arc alternative</a>
+    <a class="right" href="https://github.com/BradB808/Drift-Browser-download-page">Source on GitHub →</a>
+  </div>
+</footer>
+
+</body>
+</html>

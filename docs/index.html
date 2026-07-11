@@ -3,14 +3,51 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Drift Browser Download | Drift</title>
-<meta name="description" content="Drift is a spatial web browser. No tabs. Your pages live as connected cards on an infinite canvas. Free for macOS.">
-<meta property="og:title" content="Drift Browser Download">
-<meta property="og:description" content="No tabs. Pages are cards on an infinite canvas, connected by trails. Free for macOS.">
+<title>Drift Browser Download — Free Spatial Web Browser for Mac</title>
+<meta name="description" content="Download Drift, the free open-source spatial web browser for macOS. No tabs — pages live as connected cards on an infinite zoomable canvas, linked by trails.">
+<meta name="google-site-verification" content="CWjrx1EJy_bIB9vruZXHaJYbg5Xt5kP9RCsp5jxqOok">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Drift Browser">
+<meta property="og:title" content="Drift Browser — the spatial web browser">
+<meta property="og:description" content="No tabs. Pages are cards on an infinite canvas, connected by trails. Free and open source for macOS.">
 <meta property="og:image" content="https://driftwebbrowser.com/assets/promo.png">
 <meta property="og:url" content="https://driftwebbrowser.com/">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Drift Browser — the spatial web browser">
+<meta name="twitter:description" content="No tabs. Pages are cards on an infinite canvas, connected by trails. Free and open source for macOS.">
+<meta name="twitter:image" content="https://driftwebbrowser.com/assets/promo.png">
 <link rel="canonical" href="https://driftwebbrowser.com/">
 <link rel="icon" href="assets/icon.png">
+<link rel="apple-touch-icon" href="assets/icon.png">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "SoftwareApplication",
+      "name": "Drift",
+      "alternateName": "Drift Browser",
+      "url": "https://driftwebbrowser.com/",
+      "description": "Drift is a free, open-source spatial web browser for macOS. Instead of tabs, pages live as connected cards on an infinite zoomable canvas, linked by visible trails and organized into zones.",
+      "applicationCategory": "BrowserApplication",
+      "operatingSystem": "macOS",
+      "softwareVersion": "0.2.5",
+      "license": "https://www.gnu.org/licenses/gpl-3.0.html",
+      "isAccessibleForFree": true,
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+      "downloadUrl": "https://driftwebbrowser.com/#download",
+      "screenshot": "https://driftwebbrowser.com/assets/promo.png",
+      "image": "https://driftwebbrowser.com/assets/icon.png",
+      "author": { "@type": "Person", "name": "Brad Brunton", "url": "https://github.com/BradB808" }
+    },
+    {
+      "@type": "WebSite",
+      "name": "Drift Browser",
+      "url": "https://driftwebbrowser.com/"
+    }
+  ]
+}
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -210,6 +247,8 @@
   .mini .ico { font-size: 22px; }
   .mini h4 { font-size: 15px; margin-top: 8px; }
   .mini p { font-size: 13.5px; color: var(--gray); line-height: 1.6; margin-top: 5px; }
+  .mini a { color: var(--ink); font-weight: 500; text-decoration: underline; text-underline-offset: 2px; }
+  .mini a:hover { color: var(--orange); }
 
   /* ---------- comparisons ---------- */
   section.compare { padding: clamp(40px, 5vw, 64px) 0 0; }
@@ -324,7 +363,7 @@
     color: var(--gray);
     font-size: 13.5px;
   }
-  footer .row { display: flex; align-items: center; gap: 14px; }
+  footer .row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
   footer a { color: var(--ink); text-decoration: none; font-weight: 500; }
   footer .right { margin-left: auto; }
 </style>
@@ -381,7 +420,7 @@
         <div class="mini"><div class="ico">▢</div><h4>Zones</h4><p>Name a region like “Trip planning” or “Biology”, recolor it, move it as one.</p></div>
         <div class="mini"><div class="ico">⛶</div><h4>Focus &amp; full screen</h4><p>Focus a card, pin two side-by-side, or go truly full screen. Esc floats you back.</p></div>
         <div class="mini"><div class="ico">★</div><h4>Bookmarks &amp; search</h4><p>Star pages, sort them into folders, and import your bookmarks straight from Chrome, Brave, or Firefox. ⌘F lights up matches right on the canvas.</p></div>
-        <div class="mini"><div class="ico">🧩</div><h4>Chrome extensions</h4><p>Install ad blockers and more straight from the Chrome Web Store. Icons sit in the toolbar and work across every tab.</p></div>
+        <div class="mini"><div class="ico">🧩</div><h4>Chrome extensions</h4><p>Install ad blockers and more straight from the Chrome Web Store. Icons sit in the toolbar and work on every card.</p></div>
         <div class="mini"><div class="ico">🎨</div><h4>Make it yours</h4><p>Keep the rotating photo backdrops, pick a solid color, or drop in your own image from Settings.</p></div>
         <div class="mini"><div class="ico">🔒</div><h4>Private by design</h4><p>No accounts, no sync servers, no browsing log. Your canvas lives on your machine.</p></div>
       </div>
@@ -462,6 +501,61 @@
   </div>
 </section>
 
+<section class="block" id="faq">
+  <div class="wrap">
+    <div class="card">
+      <div>
+        <h2 class="serif">Questions,<br>answered</h2>
+      </div>
+      <div class="minis">
+        <div class="mini"><h4>Is Drift free?</h4><p>Yes. Drift is free and open source under the GPL-3.0 license. No accounts, no subscriptions, no upsells.</p></div>
+        <div class="mini"><h4>What is a spatial browser?</h4><p>A browser that lays your pages out as cards on a zoomable canvas instead of a row of tabs, so your session looks like a map. <a href="what-is-a-spatial-browser/">Read the full explainer</a>.</p></div>
+        <div class="mini"><h4>What does Drift run on?</h4><p>macOS, on both Apple Silicon and Intel Macs. A Windows build is coming soon.</p></div>
+        <div class="mini"><h4>Does Drift support Chrome extensions?</h4><p>Yes. Install ad blockers and other extensions straight from the Chrome Web Store; their icons live in the Drift toolbar.</p></div>
+        <div class="mini"><h4>Does Drift track my browsing?</h4><p>No. There are no accounts, no sync servers, and no browsing log. Your canvas and bookmarks stay on your machine.</p></div>
+        <div class="mini"><h4>What engine does Drift use?</h4><p>Chromium, via Electron. Every card is a real sandboxed browser page, so logins, video, and web apps all work like you expect.</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    { "@type": "Question", "name": "Is Drift free?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Drift is free and open source under the GPL-3.0 license. No accounts, no subscriptions, no upsells." } },
+    { "@type": "Question", "name": "What is a spatial browser?", "acceptedAnswer": { "@type": "Answer", "text": "A browser that lays your pages out as cards on a zoomable canvas instead of a row of tabs, so your session looks like a map." } },
+    { "@type": "Question", "name": "What does Drift run on?", "acceptedAnswer": { "@type": "Answer", "text": "macOS, on both Apple Silicon and Intel Macs. A Windows build is coming soon." } },
+    { "@type": "Question", "name": "Does Drift support Chrome extensions?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Install ad blockers and other extensions straight from the Chrome Web Store; their icons live in the Drift toolbar." } },
+    { "@type": "Question", "name": "Does Drift track my browsing?", "acceptedAnswer": { "@type": "Answer", "text": "No. There are no accounts, no sync servers, and no browsing log. Your canvas and bookmarks stay on your machine." } },
+    { "@type": "Question", "name": "What engine does Drift use?", "acceptedAnswer": { "@type": "Answer", "text": "Chromium, via Electron. Every card is a real sandboxed browser page, so logins, video, and web apps all work like you expect." } }
+  ]
+}
+</script>
+
+<section class="compare" id="learn">
+  <div class="wrap">
+    <h2 class="serif">Go deeper</h2>
+    <div class="dl-grid">
+      <div class="dl">
+        <h3>What is a spatial browser?</h3>
+        <div class="sub2">Why maps beat tab strips for research and deep work.</div>
+        <a class="get" href="what-is-a-spatial-browser/">Read the explainer</a>
+      </div>
+      <div class="dl">
+        <h3>A browser without tabs</h3>
+        <div class="sub2">What browsing looks like when tab overload isn't a given.</div>
+        <a class="get" href="browser-without-tabs/">See how it works</a>
+      </div>
+      <div class="dl">
+        <h3>Looking for an Arc alternative?</h3>
+        <div class="sub2">How Drift compares for people who loved Arc's ideas.</div>
+        <a class="get" href="arc-browser-alternative/">Compare</a>
+      </div>
+    </div>
+  </div>
+</section>
+
 <section class="download" id="download">
   <div class="wrap">
     <h2 class="serif">Get Drift</h2>
@@ -483,6 +577,9 @@
 <footer>
   <div class="wrap row">
     <span>◍ Drift, a spatial web browser.</span>
+    <a href="what-is-a-spatial-browser/">Spatial browsing</a>
+    <a href="browser-without-tabs/">No tabs</a>
+    <a href="arc-browser-alternative/">Arc alternative</a>
     <a class="right" href="https://github.com/BradB808/Drift-Browser-download-page">Source on GitHub →</a>
   </div>
 </footer>
@@ -494,7 +591,8 @@
   if (/Windows/i.test(ua)) {
     mainBtn.textContent = "Get Drift (macOS, Windows soon)";
   } else if (/Mac/i.test(ua)) {
-    mainBtn.href = REL + "Drift-mac-arm64.dmg";
+    // UA strings can't distinguish Apple Silicon from Intel, so send Mac users
+    // to the download cards where both DMGs are labeled.
     mainBtn.textContent = "Get Drift for macOS";
   } else {
     mainBtn.textContent = "Get Drift";

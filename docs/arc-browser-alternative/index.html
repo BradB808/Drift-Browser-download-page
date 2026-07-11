@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Looking for an Arc Browser Alternative? Meet Drift</title>
+<meta name="description" content="Arc rethought the browser, then its development wound down. Drift is a free, open-source spatial browser for Mac that goes further: no tabs at all.">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Drift Browser">
+<meta property="og:title" content="Looking for an Arc Browser Alternative? Meet Drift">
+<meta property="og:description" content="Arc rethought the browser, then its development wound down. Drift is a free, open-source spatial browser for Mac that goes further: no tabs at all.">
+<meta property="og:url" content="https://driftwebbrowser.com/arc-browser-alternative/">
+<meta property="og:image" content="https://driftwebbrowser.com/assets/promo.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Looking for an Arc Browser Alternative? Meet Drift">
+<meta name="twitter:description" content="Arc rethought the browser, then its development wound down. Drift is a free, open-source spatial browser for Mac that goes further: no tabs at all.">
+<meta name="twitter:image" content="https://driftwebbrowser.com/assets/promo.png">
+<link rel="canonical" href="https://driftwebbrowser.com/arc-browser-alternative/">
+<link rel="icon" href="../assets/icon.png">
+<link rel="apple-touch-icon" href="../assets/icon.png">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "headline": "Looking for an Arc Browser Alternative? Meet Drift",
+  "description": "Arc rethought the browser, then its development wound down. Drift is a free, open-source spatial browser for Mac that goes further: no tabs at all.",
+  "datePublished": "2026-07-10",
+  "dateModified": "2026-07-10",
+  "author": { "@type": "Person", "name": "Brad Brunton", "url": "https://github.com/BradB808" },
+  "image": "https://driftwebbrowser.com/assets/promo.png",
+  "mainEntityOfPage": "https://driftwebbrowser.com/arc-browser-alternative/",
+  "publisher": { "@type": "Organization", "name": "Drift Browser", "url": "https://driftwebbrowser.com/" }
+}
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #1b1b1f;
+    --gray: #585866;
+    --faint: #f4f4f6;
+    --line: #1b1b1f;
+    --orange: #ff5c0a;
+    --orange2: #ff2e63;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: #ffffff;
+    color: var(--ink);
+    font-family: "Poppins", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+  .serif { font-family: "Fraunces", Georgia, serif; }
+  .wrap { max-width: 1240px; margin: 0 auto; padding: 0 clamp(20px, 4vw, 56px); }
+
+  /* ---------- nav ---------- */
+  nav {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: rgba(255, 255, 255, 0.92);
+    backdrop-filter: blur(14px);
+    border-bottom: 1px solid rgba(27, 27, 31, 0.08);
+  }
+  nav .row { display: flex; align-items: center; gap: 26px; height: 72px; }
+  .brand { display: flex; align-items: center; gap: 11px; font-weight: 700; letter-spacing: 0.14em; font-size: 15px; color: var(--ink); text-decoration: none; }
+  .brand img { height: 34px; border-radius: 8px; }
+  nav .links { margin-left: auto; display: flex; gap: 26px; align-items: center; }
+  nav .links a { color: var(--ink); text-decoration: none; font-size: 14.5px; font-weight: 500; }
+  nav .links a:hover { color: var(--orange); }
+  /* Liquid glass CTA, matching Drift's in-app toolbar */
+  .pill {
+    position: relative;
+    overflow: hidden;
+    display: inline-block;
+    background: linear-gradient(135deg,
+      rgba(44, 37, 52, 0.94) 0%,
+      rgba(23, 19, 29, 0.9) 45%,
+      rgba(40, 31, 46, 0.92) 100%);
+    color: #fff !important;
+    font-weight: 600;
+    padding: 11px 24px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    box-shadow: 0 10px 26px rgba(27, 27, 31, 0.28),
+      inset 0 1px 0 rgba(255, 255, 255, 0.35),
+      inset 0 -1px 1px rgba(255, 255, 255, 0.08);
+    text-decoration: none;
+    transition: transform 0.12s ease, box-shadow 0.15s ease, filter 0.15s ease;
+  }
+  .pill::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: radial-gradient(130% 70% at 22% -20%, rgba(255, 255, 255, 0.35), transparent 55%);
+    pointer-events: none;
+  }
+  .pill:hover {
+    transform: translateY(-1px);
+    filter: brightness(1.15);
+    box-shadow: 0 14px 34px rgba(27, 27, 31, 0.36),
+      inset 0 1px 0 rgba(255, 255, 255, 0.4),
+      inset 0 -1px 1px rgba(255, 255, 255, 0.08);
+    color: #fff;
+  }
+  .btn-main {
+    position: relative;
+    overflow: hidden;
+    display: inline-block;
+    background: linear-gradient(135deg,
+      rgba(44, 37, 52, 0.95) 0%,
+      rgba(23, 19, 29, 0.92) 45%,
+      rgba(40, 31, 46, 0.94) 100%);
+    color: #fff;
+    font-weight: 600;
+    font-size: 18px;
+    padding: 17px 36px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    text-decoration: none;
+    transition: transform 0.12s ease, box-shadow 0.15s ease, filter 0.15s ease;
+    box-shadow: 0 14px 36px rgba(27, 27, 31, 0.3),
+      inset 0 1.5px 0 rgba(255, 255, 255, 0.38),
+      inset 0 -1px 1px rgba(255, 255, 255, 0.08);
+  }
+  .btn-main::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: radial-gradient(130% 70% at 22% -20%, rgba(255, 255, 255, 0.32), transparent 55%);
+    pointer-events: none;
+  }
+  .btn-main:hover {
+    transform: translateY(-2px);
+    filter: brightness(1.15);
+    box-shadow: 0 20px 46px rgba(27, 27, 31, 0.38),
+      inset 0 1.5px 0 rgba(255, 255, 255, 0.42),
+      inset 0 -1px 1px rgba(255, 255, 255, 0.08);
+  }
+
+  /* ---------- article header ---------- */
+  header.top { padding: clamp(44px, 6vw, 84px) 0 clamp(10px, 2vw, 24px); }
+  .eyebrow {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--orange);
+    margin-bottom: 18px;
+  }
+  header.top h1 {
+    font-family: "Fraunces", Georgia, serif;
+    font-weight: 700;
+    font-size: clamp(40px, 6.4vw, 78px);
+    line-height: 1.02;
+    letter-spacing: -0.015em;
+    max-width: 900px;
+  }
+  header.top .sub {
+    margin-top: 26px;
+    font-size: clamp(17px, 2vw, 22px);
+    font-weight: 600;
+    line-height: 1.5;
+    max-width: 760px;
+  }
+  .dateline { margin-top: 16px; font-size: 13.5px; color: var(--gray); }
+
+  /* ---------- screenshot ---------- */
+  .shot { position: relative; padding: clamp(28px, 4vw, 52px) 0 10px; }
+  .shot .frame {
+    border: 1.5px solid var(--ink);
+    border-radius: 24px;
+    overflow: hidden;
+    box-shadow: 0 30px 80px rgba(27, 27, 31, 0.12);
+    background: #0d0b10;
+  }
+  .shot img { width: 100%; display: block; }
+  .shot .cap { margin-top: 14px; font-size: 13.5px; color: var(--gray); text-align: center; }
+
+  /* ---------- article prose ---------- */
+  article { padding: clamp(24px, 3.4vw, 44px) 0 0; }
+  .prose { max-width: 820px; }
+  .prose h2 {
+    font-family: "Fraunces", Georgia, serif;
+    font-weight: 700;
+    font-size: clamp(28px, 3.6vw, 44px);
+    line-height: 1.08;
+    letter-spacing: -0.01em;
+    margin: clamp(38px, 5vw, 60px) 0 16px;
+  }
+  .prose h3 {
+    font-size: 17px;
+    font-weight: 600;
+    margin: 26px 0 8px;
+  }
+  .prose p { font-size: 15.5px; line-height: 1.75; color: #3c3947; margin: 0 0 16px; }
+  .prose a { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; font-weight: 500; }
+  .prose a:hover { color: var(--orange); }
+  .prose ul { margin: 0 0 18px; padding-left: 22px; }
+  .prose li { font-size: 15.5px; line-height: 1.75; color: #3c3947; margin-bottom: 10px; }
+  .prose li::marker { color: var(--orange); }
+  .prose strong { color: var(--ink); }
+  .callout {
+    background: var(--faint);
+    border-radius: 16px;
+    padding: 20px 24px;
+    margin: 0 0 18px;
+  }
+  .callout p { margin: 0; font-size: 14.5px; }
+
+  /* ---------- comparison table ---------- */
+  .table-scroll {
+    border: 1.5px solid var(--ink);
+    border-radius: 24px;
+    overflow-x: auto;
+    margin: 10px 0 20px;
+    max-width: 980px;
+  }
+  table.compare {
+    width: 100%;
+    min-width: 640px;
+    border-collapse: collapse;
+    font-size: 14.5px;
+  }
+  table.compare th, table.compare td {
+    text-align: left;
+    padding: 15px 20px;
+    border-bottom: 1px solid rgba(27, 27, 31, 0.12);
+    vertical-align: top;
+    line-height: 1.6;
+  }
+  table.compare thead th {
+    background: var(--faint);
+    font-weight: 600;
+    font-size: 13.5px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  table.compare tbody tr:last-child th,
+  table.compare tbody tr:last-child td { border-bottom: none; }
+  table.compare tbody th { font-weight: 600; white-space: nowrap; color: var(--ink); }
+  table.compare td { color: #3c3947; }
+
+  /* ---------- CTA ---------- */
+  section.getit { padding: clamp(40px, 5vw, 64px) 0 clamp(60px, 7vw, 100px); }
+  .cta-card {
+    border: 1.5px solid var(--ink);
+    border-radius: 24px;
+    padding: clamp(30px, 5vw, 64px);
+  }
+  .cta-card h2 {
+    font-family: "Fraunces", Georgia, serif;
+    font-weight: 700;
+    font-size: clamp(32px, 4.4vw, 54px);
+    line-height: 1.05;
+  }
+  .cta-card p { margin-top: 16px; font-size: 15.5px; line-height: 1.7; color: var(--gray); max-width: 640px; }
+  .cta-card .cta { margin-top: 30px; }
+  .cta-card .fineprint { margin-top: 20px; font-size: 13px; color: var(--gray); line-height: 1.8; }
+  .cta-card .fineprint a { color: var(--ink); }
+  .cta-card .fineprint a:hover { color: var(--orange); }
+
+  footer {
+    border-top: 1px solid rgba(27, 27, 31, 0.1);
+    padding: 26px 0;
+    color: var(--gray);
+    font-size: 13.5px;
+  }
+  footer .row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  footer a { color: var(--ink); text-decoration: none; font-weight: 500; }
+  footer .right { margin-left: auto; }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap row">
+    <a class="brand" href="../"><img src="../assets/icon.png" alt="Drift">DRIFT</a>
+    <div class="links">
+      <a href="../#features">Features</a>
+      <a href="https://github.com/BradB808/Drift-Browser-download-page">GitHub</a>
+      <a class="pill" href="../#download">Get Drift</a>
+    </div>
+  </div>
+</nav>
+
+<header class="top">
+  <div class="wrap">
+    <p class="eyebrow">Comparison</p>
+    <h1 class="serif">Looking for an Arc browser alternative?</h1>
+    <p class="sub">Arc proved a browser could be rethought from the ground up. Then its makers
+      moved on. Here is an honest look at where that energy can go next, including a spatial
+      browser that removes tabs entirely.</p>
+    <p class="dateline">By Brad Brunton · Updated July 2026</p>
+  </div>
+</header>
+
+<article>
+  <div class="wrap">
+    <div class="prose">
+
+      <h2 class="serif">What actually happened to Arc</h2>
+      <p>First, the facts, because they are easy to get wrong. In May 2025, The Browser Company
+        announced it would stop building new features for Arc and put its effort into Dia, a new
+        AI-centered browser. In September 2025, Atlassian agreed to acquire The Browser Company
+        for $610 million, and the deal closed that October.</p>
+      <p>As of mid-2026, Arc is not dead. You can still download it, and it still receives
+        Chromium security updates. But it is in maintenance mode: no new features are planned,
+        no sunset date has been announced, and the team that made it is building something else.</p>
+      <p>None of that diminishes what Arc achieved. Spaces, the sidebar, the care in every
+        animation: Arc showed that a browser could feel designed rather than default, and it
+        earned a following of people who live in their browser all day. That is exactly the bar
+        any alternative has to clear.</p>
+
+      <h2 class="serif">Meet Drift: the rethink, taken further</h2>
+      <p><a href="../">Drift</a> is a free, open-source spatial browser for macOS. It starts from
+        the same conviction Arc did, that browser chrome deserves rethinking, and then goes
+        further than Arc ever went: it removes tabs entirely.</p>
+      <p>In Drift there is no tab strip. Every page is a live card on an infinite, zoomable
+        canvas. Zoom out and your session becomes a constellation of live page thumbnails you can
+        survey at a glance. Zoom in and every card is a full browser page: logins, video, and web
+        apps all work, because every card is a real Chromium page. If the idea is new to you, the
+        explainer on <a href="../what-is-a-spatial-browser/">what a spatial browser is</a> covers
+        it in depth.</p>
+      <p>Follow a link that would normally open a new tab, and Drift spawns a child card with a
+        visible trail back to its parent. Your path through the web becomes a map you can see,
+        not a mental model you have to maintain. You can draw trails yourself by dragging between
+        cards, remove one with a double-click, and export any trail as a Markdown reading list.</p>
+    </div>
+  </div>
+
+  <div class="shot">
+    <div class="wrap">
+      <div class="frame">
+        <img src="../assets/promo.png" loading="lazy"
+          alt="Drift's infinite canvas showing a biology research session: Cell, DNA, Mitochondria, CRISPR, Evolution and Photosynthesis pages as live cards connected by trails">
+      </div>
+      <p class="cap">A research session in Drift: every page is a live card, and the trails show how you got there.</p>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <div class="prose">
+      <h2 class="serif">What Arc users will recognize</h2>
+      <p>Coming from Arc, plenty of Drift will feel like home:</p>
+      <ul>
+        <li><strong>Zones are the spatial cousin of Spaces.</strong> Name a region of the canvas,
+          say "Trip planning" or "Biology", give it a color, and move the whole thing as one unit.</li>
+        <li><strong>Focus when you need it.</strong> Focus a single card, pin two side by side, or
+          go full screen; Esc floats you back out to the canvas. Cmd+0 fits your whole session on
+          screen, and Cmd+F highlights search matches right on the canvas.</li>
+        <li><strong>Chrome extensions work.</strong> Install ad blockers and more straight from the
+          Chrome Web Store; their icons sit in the toolbar.</li>
+        <li><strong>Easy to move in.</strong> Star pages, sort them into folders, and import your
+          bookmarks from Chrome, Brave, or Firefox.</li>
+        <li><strong>It cares how it looks.</strong> Rotating photo backdrops, solid colors, or your
+          own image from Settings.</li>
+      </ul>
+
+      <h2 class="serif">Privacy without a login screen</h2>
+      <p>One place Drift deliberately parts ways with Arc: there are no accounts and no sync
+        servers. Drift keeps no browsing-history log at all. The visible trails on your canvas are
+        the only record of where you have been, and you can delete any of them with a
+        double-click. Close a card by accident and a right-click brings it back.</p>
+      <p>The trade-off is real. Because nothing leaves your machine, there is no cross-device
+        sync. If syncing between Macs matters more to you than local-only privacy, weigh that
+        honestly before switching.</p>
+
+      <h2 class="serif">Drift vs Arc at a glance</h2>
+      <p>As of July 2026:</p>
+    </div>
+
+    <div class="table-scroll">
+      <table class="compare">
+        <thead>
+          <tr><th scope="col">&nbsp;</th><th scope="col">Drift</th><th scope="col">Arc</th></tr>
+        </thead>
+        <tbody>
+          <tr><th scope="row">Engine</th><td>Chromium (via Electron)</td><td>Chromium</td></tr>
+          <tr><th scope="row">Tabs model</th><td>No tabs: live cards on an infinite zoomable canvas, connected by trails</td><td>Vertical tabs in a sidebar, organized into Spaces</td></tr>
+          <tr><th scope="row">Open source</th><td>Yes, GPL-3.0, full source on GitHub</td><td>No</td></tr>
+          <tr><th scope="row">Price</th><td>Free</td><td>Free</td></tr>
+          <tr><th scope="row">Platforms</th><td>macOS (Apple Silicon and Intel); Windows coming soon</td><td>macOS and Windows</td></tr>
+          <tr><th scope="row">Privacy &amp; sync</th><td>No accounts, no sync servers, no browsing-history log; everything stays on your machine</td><td>Account-based, with sync across devices</td></tr>
+          <tr><th scope="row">Status</th><td>Actively developed; early software at v0.2.5</td><td>Maintenance mode: security updates only, no new features</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="prose">
+      <h2 class="serif">The honest fine print</h2>
+      <p>Drift is young software, and you should know that before you switch. It is at version
+        0.2.5, built and maintained by one indie developer rather than a venture-backed team of
+        dozens. It runs on macOS only for now, on both Apple Silicon and Intel, with a Windows
+        build coming soon.</p>
+      <div class="callout">
+        <p>The macOS builds are currently unsigned, so Gatekeeper will prompt you on first
+          launch. Right-click the app and choose Open, or use "Open Anyway" in System Settings.
+          The <a href="https://github.com/BradB808/Drift-Browser-download-page">entire source is
+          on GitHub</a> under GPL-3.0 if you would rather read the code first.</p>
+      </div>
+      <p>If you want polish measured in years, Drift is not there yet. If you want to be early to
+        an idea the way Arc's first users were early in 2022, this is what that looks like.</p>
+
+      <h2 class="serif">Other Arc alternatives worth considering</h2>
+      <p>Drift will not be right for everyone, and there are other credible places for Arc users
+        to land as of 2026:</p>
+      <ul>
+        <li><strong>Dia</strong> is The Browser Company's own successor, now under Atlassian: a
+          Chromium browser for Mac built around an AI assistant in the address bar. The natural
+          choice if what you loved most was the team.</li>
+        <li><strong>Zen Browser</strong> is open source, Firefox-based, and community-funded, with
+          an Arc-like sidebar feel and an active release cadence.</li>
+        <li><strong>Vivaldi</strong> is the long-running power-user browser on Chromium, endlessly
+          customizable and actively developed for Windows, macOS, and Linux.</li>
+        <li><strong>SigmaOS</strong> is a Mac-only WebKit browser organized around workspaces,
+          with a free personal tier.</li>
+      </ul>
+      <p>All of them keep the tab in one form or another. Drift is the one that asks what
+        browsing looks like <a href="../browser-without-tabs/">without tabs at all</a>.</p>
+    </div>
+  </div>
+</article>
+
+<section class="getit" id="download">
+  <div class="wrap">
+    <div class="cta-card">
+      <h2 class="serif">Try Drift on your Mac</h2>
+      <p>Free, open source, and everything stays on your machine. Download the DMG, drag it to
+        Applications, and start with the five or six pages you would normally cram into tabs.
+        Zoom out. If seeing your whole session at once clicks for you the way Arc's sidebar once
+        did, you will know within an hour.</p>
+      <div class="cta"><a class="btn-main" href="../#download">Download Drift for macOS</a></div>
+      <p class="fineprint">DMGs for Apple Silicon and Intel Macs. Windows is coming soon.
+        Questions first? Start at the <a href="../">Drift home page</a> or browse the
+        <a href="https://github.com/BradB808/Drift-Browser-download-page">source on GitHub</a>.</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap row">
+    <span>◍ Drift, a spatial web browser.</span>
+    <a href="../what-is-a-spatial-browser/">Spatial browsing</a>
+    <a href="../browser-without-tabs/">No tabs</a>
+    <a href="../">Home</a>
+    <a class="right" href="https://github.com/BradB808/Drift-Browser-download-page">Source on GitHub →</a>
+  </div>
+</footer>
+
+</body>
+</html>
