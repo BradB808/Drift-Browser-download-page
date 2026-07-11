@@ -2567,8 +2567,14 @@ drift.onUpdateAvailable(({ version }) => {
 drift.onExtAdoptTab(({ id, url }) => adoptCard(id, url))
 drift.onExtOpenSidePanel(d => openSidePanelCard(d))
 drift.onExtSelectTab(({ id }) => {
+  // The extension system activated a tab — reflect it in the UI. Guard against the
+  // echo: main calls selectExtTab whenever a view is raised, and the library echoes
+  // that straight back as another ext:selectTab. Re-raising here would bounce it back
+  // to main forever — an infinite loop that pans the canvas on every turn (the "shake
+  // and drift" bug). Skip if it's already the active card, and don't re-raise.
+  if (id === activeId) return
   const c = cards.get(id)
-  if (c) { setActive(id); drift.raise(id); ensureVisible(c) }
+  if (c) { setActive(id); ensureVisible(c) }
 })
 drift.onExtRemoveTab(({ id }) => { if (cards.has(id)) closeCard(id) })
 drift.onExtReady(() => {
@@ -2816,6 +2822,17 @@ function restore(st) {
   for (const zd of st.zones || []) createZone(zd)
   for (const d of st.cards || []) createCard(d, { restored: true })
   for (const e of st.edges || []) addEdge(e.from, e.to, true)
+  // Recover from a corrupted/runaway view offset. The pre-0.3.1 canvas-drift bug
+  // could push the saved view millions of pixels from the content; restoring that
+  // verbatim would show an empty void. If nothing would be on screen, fit to content.
+  const bb = contentBBox()
+  if (bb && Number.isFinite(V.ox) && Number.isFinite(V.oy)) {
+    const sx = bb.x * V.s + V.ox, sy = bb.y * V.s + V.oy, sw = bb.w * V.s, sh = bb.h * V.s
+    const offScreen = sx + sw < 40 || sx > innerWidth - 40 || sy + sh < TOOLBAR + 40 || sy > innerHeight - 40
+    if (offScreen) fitAll()
+  } else if (bb) {
+    fitAll() // non-finite saved offset
+  }
   dirty = false
 }
 
