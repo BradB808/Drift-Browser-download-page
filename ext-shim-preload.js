@@ -1,7 +1,7 @@
 // Drift extension-API shim preload.
 //
 // electron-chrome-extensions@4.9 implements only a subset of chrome.*. Side-panel
-// extensions (e.g. the official Claude extension) render their whole UI through
+// extensions (many AI assistants, for example) render their whole UI through
 // chrome.sidePanel and drive pages through chrome.debugger — neither of which the
 // library provides, so out of the box such an extension installs but does nothing.
 //

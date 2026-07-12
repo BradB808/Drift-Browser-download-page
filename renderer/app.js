@@ -1187,8 +1187,8 @@ function adoptCard(id, url) {
 }
 
 // Open an extension's side panel as a card docked beside the page it belongs to,
-// linked by a trail. Side-panel extensions (e.g. Claude) call chrome.sidePanel.open
-// from their action's onClicked handler; main forwards it here.
+// linked by a trail. Side-panel extensions call chrome.sidePanel.open from their
+// action's onClicked handler; main forwards it here.
 const panelCards = new Map() // key `${extId}|${pageId}` -> panel card id
 
 function openSidePanelCard({ extId, driftId, url }) {

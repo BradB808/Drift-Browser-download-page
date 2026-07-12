@@ -103,8 +103,8 @@ function setupExtShims({ session, getWindow, sendUI, resolveTab, getManifest, li
     },
     // NOTE: openPanelOnActionClick is stored but not auto-honored — Drift can't tell
     // from the toolbar which extension's icon was clicked. Extensions that open their
-    // panel from an action.onClicked listener (e.g. Claude) work; ones that rely
-    // solely on this flag won't auto-open on click. Tracked as a known limitation.
+    // panel from an action.onClicked listener work; ones that rely solely on this
+    // flag won't auto-open on click. Tracked as a known limitation.
     'sidePanel.setPanelBehavior': (ctx, [behavior = {}]) => {
       panelBehavior.set(ctx.extId, { openPanelOnActionClick: !!behavior.openPanelOnActionClick })
       return {}
