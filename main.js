@@ -115,11 +115,15 @@ function createView(id, url, opts = {}) {
 function destroyView(id) {
   const m = views.get(id)
   if (!m) return
+  // Same keyboard-theft guard as the layout detach: a focused page must hand
+  // the keyboard back to the canvas before it disappears.
+  const focused = !m.view.webContents.isDestroyed() && m.view.webContents.isFocused()
   if (m.attached && win && !win.isDestroyed()) win.contentView.removeChildView(m.view)
   if (topViewId === id) topViewId = null
   if (selectedExtWc === m.view.webContents) selectedExtWc = null
   m.view.webContents.close()
   views.delete(id)
+  if (focused && win && !win.isDestroyed()) win.webContents.focus()
 }
 
 // ---------- IPC ----------
@@ -192,8 +196,13 @@ ipcMain.on('view:layout', (e, { zoom, items }) => {
   }
   for (const [id, m] of views) {
     if (!seen.has(id) && m.attached) {
+      // A page that keeps keyboard focus while hidden swallows every keystroke
+      // (Escape "dies" after panning away from a focused page) — hand the
+      // keyboard back to the canvas before hiding it.
+      const focused = m.view.webContents.isFocused()
       win.contentView.removeChildView(m.view)
       m.attached = false
+      if (focused) win.webContents.focus()
     }
   }
 })
