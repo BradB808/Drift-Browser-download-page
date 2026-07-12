@@ -55,6 +55,7 @@ let dirty = false
 let snapDirty = false                // only thumbnails changed; persisted lazily, not per-save-tick
 let layoutQueued = false
 let animToken = 0
+let animHardUntil = 0                // wheel input ignored until then, so trackpad momentum can't kill a deliberate glide
 let viewFreeze = false               // during zoom animations, pages show snapshots
 
 // ---------- dom ----------
@@ -1243,7 +1244,7 @@ function ensureVisible(c) {
 
 // ---------- view / card animation ----------
 
-function animateView(target, ms = 280) {
+function animateView(target, ms = 280, onDone) {
   const from = { ...V }
   // Resizing + re-zooming live pages every frame makes their content reflow
   // mid-flight and looks awful. For zoom-changing animations, freeze pages to
@@ -1273,6 +1274,7 @@ function animateView(target, ms = 280) {
       flushZoom() // land on the exact zoom (and match any prezoomed page)
       markDirty()
       scheduleLayout()
+      if (onDone) onDone() // only on a real landing — cancelled glides skip it
     }
   }
   requestAnimationFrame(step)
@@ -1321,6 +1323,7 @@ function fitAll() {
   if (!b) return
   const pad = 90
   const s = clamp(Math.min(innerWidth / (b.w + pad * 2), (innerHeight - TOOLBAR) / (b.h + pad * 2)), MIN_S, 1)
+  animHardUntil = performance.now() + 340
   animateView({
     s,
     ox: innerWidth / 2 - (b.x + b.w / 2) * s,
@@ -1333,11 +1336,14 @@ function focusCard(c) {
   setActive(c.id)
   c.lastActive = Date.now()
   const s = clamp(Math.min((innerWidth - 90) / c.w, (innerHeight - TOOLBAR - 60) / c.h), 0.2, 2.2)
-  const go = () => animateView({
-    s,
-    ox: innerWidth / 2 - (c.x + c.w / 2) * s,
-    oy: TOOLBAR + (innerHeight - TOOLBAR) / 2 - (c.y + c.h / 2) * s
-  })
+  const go = () => {
+    animHardUntil = performance.now() + 340
+    animateView({
+      s,
+      ox: innerWidth / 2 - (c.x + c.w / 2) * s,
+      oy: TOOLBAR + (innerHeight - TOOLBAR) / 2 - (c.y + c.h / 2) * s
+    })
+  }
   // A fresh thumbnail makes the frozen frame match the live page, but the
   // capture round trip can take 100ms+ — never let it hold the click hostage.
   // The animation starts within 90ms either way; a late frame swaps in
@@ -1369,6 +1375,7 @@ function focusPair(a, b) {
   const x2 = tx + b.w, y2 = Math.max(a.y + a.h, ty + b.h)
   const pad = 70
   const s = clamp(Math.min((innerWidth - pad * 2) / (x2 - x1), (innerHeight - TOOLBAR - pad * 2) / (y2 - y1)), 0.2, 2.2)
+  animHardUntil = performance.now() + 340
   animateView({
     s,
     ox: innerWidth / 2 - ((x1 + x2) / 2) * s,
@@ -1389,12 +1396,17 @@ function exitFocus() {
   if (!focusState) return
   restoreSplit()
   const target = focusState.prev
-  focusState = null
+  // focusState survives until the glide actually lands: if something still
+  // cancels it mid-flight, the next Escape retries instead of going dead.
+  const go = () => {
+    animHardUntil = performance.now() + 340
+    animateView(target, 280, () => { focusState = null })
+  }
   const c = activeId && cards.get(activeId)
   // Fresh thumbnail of the page you were just reading, then glide out — with
   // the same 90ms deadline as focusCard so leaving never feels sticky.
-  if (c && c.live && c.viewCreated && !c.mediaPlaying) Promise.race([takeSnapshot(c, true), sleep(90)]).then(() => animateView(target))
-  else animateView(target)
+  if (c && c.live && c.viewCreated && !c.mediaPlaying) Promise.race([takeSnapshot(c, true), sleep(90)]).then(go)
+  else go()
 }
 
 // True fullscreen: the page's live Chromium view covers the whole window
@@ -1513,6 +1525,11 @@ function wireGlobalInput() {
     if (paletteOpen || tourOpen) return // overlays own the wheel
     if (e.target.closest('.no-pan')) return
     e.preventDefault()
+    // Focus/Escape glides are deliberate commands: trackpad momentum keeps
+    // emitting wheel events for up to a second after a pan, and one stray
+    // tick here would cancel the glide a frame after it starts (Escape then
+    // looked dead). Swallow wheel input while such a glide is in flight.
+    if (performance.now() < animHardUntil) return
     closeCtx()
     animToken++
     viewFreeze = false
