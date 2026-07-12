@@ -79,10 +79,13 @@ body.nobg #bgimg { display: none; }
 
 #grid {
   position: absolute;
-  inset: 0;
+  /* Oversized by one tile (60px at max zoom): the grid pans via compositor
+     transform instead of background-position, so panning never repaints it. */
+  inset: -72px;
   pointer-events: none;
   background-image: radial-gradient(rgba(255, 255, 255, 0.055) 1px, transparent 1px);
   background-size: 24px 24px;
+  will-change: transform;
 }
 
 #world {
@@ -92,6 +95,9 @@ body.nobg #bgimg { display: none; }
   width: 0;
   height: 0;
   transform-origin: 0 0;
+  /* Own compositor layer: pans move it without re-rastering every card
+     shadow, snapshot, and trail on each frame. */
+  will-change: transform;
 }
 
 #edges {

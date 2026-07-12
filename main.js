@@ -69,6 +69,10 @@ function wireView(id, view) {
     if (isMainFrame && code !== -3) emit('fail', { desc: desc || ('error ' + code) })
   })
   wc.on('focus', () => emit('focus'))
+  // Playback state: the renderer skips thumbnail captures on cards that are
+  // mid-playback, so periodic capturePage never causes a video frame hitch.
+  wc.on('media-started-playing', () => emit('media', { playing: true }))
+  wc.on('media-paused', () => emit('media', { playing: false }))
 
   // Links that want a new window/tab become child cards with a trail edge instead.
   wc.setWindowOpenHandler(({ url }) => {
@@ -111,9 +115,15 @@ function createView(id, url, opts = {}) {
 function destroyView(id) {
   const m = views.get(id)
   if (!m) return
+  // Same keyboard-theft guard as the layout detach: a focused page must hand
+  // the keyboard back to the canvas before it disappears.
+  const focused = !m.view.webContents.isDestroyed() && m.view.webContents.isFocused()
   if (m.attached && win && !win.isDestroyed()) win.contentView.removeChildView(m.view)
+  if (topViewId === id) topViewId = null
+  if (selectedExtWc === m.view.webContents) selectedExtWc = null
   m.view.webContents.close()
   views.delete(id)
+  if (focused && win && !win.isDestroyed()) win.webContents.focus()
 }
 
 // ---------- IPC ----------
@@ -146,23 +156,37 @@ ipcMain.handle('view:nav', (_e, { id, action }) => {
   else if (action === 'stop') wc.stop()
 })
 
+// The send-style view channels move/stack native views — only the canvas
+// renderer may drive them (session preloads mean page frames reach
+// ipcRenderer too, so check the sender).
+function fromCanvas(e) {
+  return win && !win.isDestroyed() && e.sender === win.webContents
+}
+
 // Renderer sends the full set of live cards each frame; anything not listed
 // gets detached (it keeps running in the background, like an unfocused tab).
-ipcMain.on('view:layout', (_e, { zoom, items }) => {
-  if (!win || win.isDestroyed() || !Array.isArray(items)) return
+ipcMain.on('view:layout', (e, { zoom, items }) => {
+  if (!fromCanvas(e) || !Array.isArray(items)) return
   const z = clampZoom(Number(zoom) || 1)
   const seen = new Set()
   for (const it of items) {
     const m = views.get(it.id)
     if (!m) continue
     seen.add(it.id)
-    if (!m.attached) { win.contentView.addChildView(m.view); m.attached = true }
-    m.view.setBounds({
+    if (!m.attached) { win.contentView.addChildView(m.view); m.attached = true; topViewId = it.id }
+    // setBounds forces a compositor re-commit even for identical values, which
+    // costs frames while a video plays — only call it when something moved.
+    const b = {
       x: Math.round(it.x),
       y: Math.round(it.y),
       width: Math.max(1, Math.round(it.w)),
       height: Math.max(1, Math.round(it.h))
-    })
+    }
+    const lb = m.bounds
+    if (!lb || lb.x !== b.x || lb.y !== b.y || lb.width !== b.width || lb.height !== b.height) {
+      m.view.setBounds(b)
+      m.bounds = b
+    }
     // Content zoom must track the scaled bounds every frame, or pages look
     // mis-scaled mid-animation (focus in/out, pinch).
     if (m.zoom === null || Math.abs(m.zoom - z) > 0.001) {
@@ -172,19 +196,49 @@ ipcMain.on('view:layout', (_e, { zoom, items }) => {
   }
   for (const [id, m] of views) {
     if (!seen.has(id) && m.attached) {
+      // A page that keeps keyboard focus while hidden swallows every keystroke
+      // (Escape "dies" after panning away from a focused page) — hand the
+      // keyboard back to the canvas before hiding it.
+      const focused = m.view.webContents.isFocused()
       win.contentView.removeChildView(m.view)
       m.attached = false
+      if (focused) win.webContents.focus()
     }
   }
 })
 
-ipcMain.on('view:raise', (_e, id) => {
+// Which view sits on top of the native stack; raising it again would be a
+// pointless compositor re-commit (mousedown fires a raise on every click).
+let topViewId = null
+
+ipcMain.on('view:raise', (e, id) => {
+  if (!fromCanvas(e)) return
   const m = views.get(id)
   if (!m) return
   // Re-adding an attached view bumps it to the top of the stack.
-  if (m.attached && win && !win.isDestroyed()) win.contentView.addChildView(m.view)
+  if (m.attached && win && !win.isDestroyed() && topViewId !== id) {
+    win.contentView.addChildView(m.view)
+    topViewId = id
+  }
   // Tell the extension system this is the active tab, so its action icons update.
   selectExtTab(m.view.webContents)
+})
+
+// A zoom animation is about to land at a known final zoom: apply the zoom
+// factor now, while the views are detached behind their snapshots, so pages
+// relayout during the animation instead of visibly popping at the end.
+// id '*' pre-zooms every view (the renderer can't know which will land live).
+ipcMain.on('view:prezoom', (e, { id, zoom }) => {
+  if (!fromCanvas(e)) return
+  const z = clampZoom(Number(zoom) || 1)
+  const targets = id === '*' ? [...views.values()] : views.has(id) ? [views.get(id)] : []
+  for (const m of targets) {
+    if (m.view.webContents.isDestroyed()) continue
+    if (m.zoom === null || Math.abs(m.zoom - z) > 0.001) {
+      m.view.webContents.setZoomFactor(z)
+      m.zoom = z
+    }
+  }
 })
 
 ipcMain.handle('view:snapshot', async (_e, { id, width }) => {
@@ -194,7 +248,12 @@ ipcMain.handle('view:snapshot', async (_e, { id, width }) => {
     const img = await m.view.webContents.capturePage()
     if (img.isEmpty()) return null
     const w = Math.min(1600, Math.max(80, Number(width) || 480))
-    return img.resize({ width: w }).toDataURL()
+    // resize + encode run synchronously on the main process, which is also
+    // Chromium's UI thread — every ms here is a hitch in ALL views (worst
+    // while a video plays). 'good' (box filter) over the default lanczos, and
+    // JPEG over PNG: ~5x faster to encode and ~4x smaller in the state file.
+    return 'data:image/jpeg;base64,' +
+      img.resize({ width: w, quality: 'good' }).toJPEG(72).toString('base64')
   } catch { return null }
 })
 
@@ -387,6 +446,9 @@ async function setupExtensions() {
       return [view.webContents, win]
     },
     selectTab: (tab) => {
+      // The library changed its own active tab (e.g. chrome.tabs.update):
+      // keep the dedupe cache honest so the next user click isn't skipped.
+      selectedExtWc = tab
       const id = idOfWebContents(tab)
       if (id) sendUI('ext:selectTab', { id })
     },
@@ -461,8 +523,13 @@ async function setupExtensions() {
 function attachExtTab(wc) {
   if (extensions) { try { extensions.addTab(wc, win) } catch {} }
 }
+// Re-selecting the already-selected tab would fan tabs.onActivated out to
+// every extension service worker on every click — notify only real changes.
+let selectedExtWc = null
 function selectExtTab(wc) {
-  if (extensions && wc) { try { extensions.selectTab(wc) } catch {} }
+  if (!extensions || !wc || wc === selectedExtWc) return
+  selectedExtWc = wc
+  try { extensions.selectTab(wc) } catch {}
 }
 
 // The renderer pins each card's <browser-action-list> to that card's tab id

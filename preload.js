@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('drift', {
   navAction: (id, action) => ipcRenderer.invoke('view:nav', { id, action }),
   layout: (payload) => ipcRenderer.send('view:layout', payload),
   raise: (id) => ipcRenderer.send('view:raise', id),
+  prezoom: (id, zoom) => ipcRenderer.send('view:prezoom', { id, zoom }),
   snapshot: (id, width) => ipcRenderer.invoke('view:snapshot', { id, width }),
   saveState: (json) => ipcRenderer.invoke('state:save', json),
   loadState: () => ipcRenderer.invoke('state:load'),
