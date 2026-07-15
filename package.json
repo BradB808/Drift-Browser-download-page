@@ -30,13 +30,17 @@
     "files": [
       "main.js",
       "preload.js",
+      "chat-preload.js",
       "ext-shims.js",
       "ext-shim-preload.js",
+      "ai/**/*",
+      "chat/**/*",
       "renderer/**/*",
       "node_modules/**/*"
     ],
     "asarUnpack": [
       "ext-shim-preload.js",
+      "chat-preload.js",
       "node_modules/electron-chrome-extensions/**",
       "node_modules/electron-chrome-web-store/**"
     ],

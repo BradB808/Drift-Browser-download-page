@@ -57,6 +57,7 @@ let layoutQueued = false
 let animToken = 0
 let animHardUntil = 0                // wheel input ignored until then, so trackpad momentum can't kill a deliberate glide
 let viewFreeze = false               // during zoom animations, pages show snapshots
+let aiDockW = 0                      // width reserved on the right for the AI chat dock (native view), 0 when closed
 
 // ---------- dom ----------
 
@@ -100,6 +101,10 @@ function normalizeInput(q) {
 }
 
 const toWorld = (x, y) => ({ x: (x - V.ox) / V.s, y: (y - V.oy) / V.s })
+
+// Usable canvas width: the AI dock (a native view on the right) covers its
+// strip, so camera framing centers content in what's left of the window.
+const viewW = () => innerWidth - aiDockW
 
 function screenRect(c) {
   return { x: c.x * V.s + V.ox, y: c.y * V.s + V.oy, w: c.w * V.s, h: c.h * V.s }
@@ -966,7 +971,8 @@ function doLayout() {
     // Fullscreen: one page owns the entire area under the toolbar, at 100%.
     const c = cards.get(fullId)
     if (c.live && c.viewReady) {
-      items.push({ id: c.id, x: 0, y: TOOLBAR, w: innerWidth, h: innerHeight - TOOLBAR })
+      // Leave the dock's strip uncovered so chat and the fullscreen page coexist.
+      items.push({ id: c.id, x: 0, y: TOOLBAR, w: viewW(), h: innerHeight - TOOLBAR })
     }
   } else {
     for (const c of cards.values()) {
@@ -1051,7 +1057,9 @@ function pruneViews() {
   alive
     // Never evict a side panel's view: it hosts a live extension surface (and any
     // chrome.debugger/CDP session driving its page dies with the webContents).
-    .filter(c => !c.live && !c.retiring && !c.isPanel)
+    // Nor a card the assistant just pinned to read/act on — its webContents (and
+    // any CDP session driving it) must outlive the tool call.
+    .filter(c => !c.live && !c.retiring && !c.isPanel && !(c.aiPinnedUntil > Date.now()))
     .sort((a, b) => a.lastActive - b.lastActive)
     .slice(0, alive.length - KEEP_ALIVE)
     .forEach(c => {
@@ -1226,15 +1234,15 @@ function ensureVisible(c) {
   const r = screenRect(c)
   const m = 40
   let dx = 0, dy = 0
-  if (r.x + r.w > innerWidth - m) dx = innerWidth - m - (r.x + r.w)
+  if (r.x + r.w > viewW() - m) dx = viewW() - m - (r.x + r.w)
   if (r.x < m) dx = m - r.x
   if (r.y + r.h > innerHeight - m) dy = innerHeight - m - (r.y + r.h)
   if (r.y < TOOLBAR + m) dy = TOOLBAR + m - r.y
-  if (r.w > innerWidth - 2 * m || r.h > innerHeight - TOOLBAR - 2 * m) {
+  if (r.w > viewW() - 2 * m || r.h > innerHeight - TOOLBAR - 2 * m) {
     // Card bigger than the window: just center it.
     animateView({
       s: V.s,
-      ox: innerWidth / 2 - (c.x + c.w / 2) * V.s,
+      ox: viewW() / 2 - (c.x + c.w / 2) * V.s,
       oy: TOOLBAR + (innerHeight - TOOLBAR) / 2 - (c.y + c.h / 2) * V.s
     })
   } else if (dx || dy) {
@@ -1322,11 +1330,11 @@ function fitAll() {
   const b = contentBBox()
   if (!b) return
   const pad = 90
-  const s = clamp(Math.min(innerWidth / (b.w + pad * 2), (innerHeight - TOOLBAR) / (b.h + pad * 2)), MIN_S, 1)
+  const s = clamp(Math.min(viewW() / (b.w + pad * 2), (innerHeight - TOOLBAR) / (b.h + pad * 2)), MIN_S, 1)
   animHardUntil = performance.now() + 340
   animateView({
     s,
-    ox: innerWidth / 2 - (b.x + b.w / 2) * s,
+    ox: viewW() / 2 - (b.x + b.w / 2) * s,
     oy: TOOLBAR + (innerHeight - TOOLBAR) / 2 - (b.y + b.h / 2) * s
   })
 }
@@ -1335,12 +1343,12 @@ function focusCard(c) {
   if (!focusState) focusState = { prev: { ...V } }
   setActive(c.id)
   c.lastActive = Date.now()
-  const s = clamp(Math.min((innerWidth - 90) / c.w, (innerHeight - TOOLBAR - 60) / c.h), 0.2, 2.2)
+  const s = clamp(Math.min((viewW() - 90) / c.w, (innerHeight - TOOLBAR - 60) / c.h), 0.2, 2.2)
   const go = () => {
     animHardUntil = performance.now() + 340
     animateView({
       s,
-      ox: innerWidth / 2 - (c.x + c.w / 2) * s,
+      ox: viewW() / 2 - (c.x + c.w / 2) * s,
       oy: TOOLBAR + (innerHeight - TOOLBAR) / 2 - (c.y + c.h / 2) * s
     })
   }
@@ -1374,11 +1382,11 @@ function focusPair(a, b) {
   const x1 = a.x, y1 = Math.min(a.y, ty)
   const x2 = tx + b.w, y2 = Math.max(a.y + a.h, ty + b.h)
   const pad = 70
-  const s = clamp(Math.min((innerWidth - pad * 2) / (x2 - x1), (innerHeight - TOOLBAR - pad * 2) / (y2 - y1)), 0.2, 2.2)
+  const s = clamp(Math.min((viewW() - pad * 2) / (x2 - x1), (innerHeight - TOOLBAR - pad * 2) / (y2 - y1)), 0.2, 2.2)
   animHardUntil = performance.now() + 340
   animateView({
     s,
-    ox: innerWidth / 2 - ((x1 + x2) / 2) * s,
+    ox: viewW() / 2 - ((x1 + x2) / 2) * s,
     oy: TOOLBAR + (innerHeight - TOOLBAR) / 2 - ((y1 + y2) / 2) * s
   })
   toast('Split focus — esc to leave')
@@ -1622,6 +1630,7 @@ function wireGlobalInput() {
   $('#btnBmExport').addEventListener('click', exportBookmarks)
   $('#btnBmClear').addEventListener('click', clearAllBookmarks)
   $('#btnSettings').addEventListener('click', () => { settingsOpen ? closeSettingsPanel() : openSettingsPanel() })
+  $('#btnAI').addEventListener('click', () => drift.aiToggle())
   $('#btnExt').addEventListener('click', () => drift.extOpenStore())
   if (VAULT_ENABLED) {
     $('#btnVault').classList.remove('hidden')
@@ -2667,6 +2676,98 @@ drift.onExtReady(() => {
 })
 drift.onSpawnUrl(({ url }) => { const c = newCard(url); if (c) flashCard(c) })
 
+// ---------- AI assistant (chat dock lives in main as a native view) ----------
+
+// The dock reserves a strip on the right; reframe the canvas so focused cards
+// and the minimap stay clear of it.
+drift.onAIDock(({ open, width }) => {
+  aiDockW = open ? (width || 400) : 0
+  minimap.style.right = (16 + aiDockW) + 'px'
+  mmRect = null // the minimap just moved — its cached occlusion rect is stale
+  $('#btnAI').classList.toggle('on', !!open)
+  scheduleLayout()
+})
+
+// Verbs the assistant runs against the canvas. Each resolves back to main via
+// drift.aiCanvasResult so a tool call can await the outcome.
+async function runAICanvas(verb, args = {}) {
+  switch (verb) {
+    case 'list_cards':
+      return [...cards.values()].map(c => {
+        const zone = [...zones.values()].find(z => {
+          const cx = c.x + c.w / 2, cy = c.y + c.h / 2
+          return cx >= z.x && cx <= z.x + z.w && cy >= z.y && cy <= z.y + z.h
+        })
+        return {
+          id: c.id, title: c.title, url: c.url,
+          zone: zone ? (zone.name || 'zone') : null,
+          edges: edges.filter(e => e.from === c.id || e.to === c.id)
+            .map(e => (e.from === c.id ? e.to : e.from)),
+          active: c.id === activeId, focused: c.id === fullId,
+          live: !!c.live, panel: !!c.isPanel
+        }
+      })
+    case 'open_card': {
+      const u = normalizeInput(String(args.url || ''))
+      if (!u) throw new Error('no valid url')
+      const parent = args.parent_id && cards.get(args.parent_id)
+      const c = parent ? spawnChild(parent, u) : newCard(u)
+      if (c && !parent) flashCard(c)
+      return { id: c ? c.id : null }
+    }
+    case 'navigate_card': {
+      const c = cards.get(args.card_id)
+      if (!c) throw new Error('no such card')
+      if (args.action === 'url') {
+        const u = normalizeInput(String(args.url || ''))
+        if (!u) throw new Error('no valid url')
+        navigateCard(c, u)
+      } else if (['back', 'forward', 'reload'].includes(args.action)) {
+        if (c.viewCreated) drift.navAction(c.id, args.action)
+      }
+      return { ok: true }
+    }
+    case 'focus_card': {
+      const c = cards.get(args.card_id)
+      if (!c) throw new Error('no such card')
+      jumpToCard(c)
+      return { ok: true }
+    }
+    case 'ensure_live': {
+      // Bring a card's page to life (creating its view if needed) and pin it so
+      // pruneViews can't destroy it out from under an in-progress read.
+      const c = cards.get(args.id || args.card_id)
+      if (!c) throw new Error('no such card')
+      c.lastActive = Date.now()
+      c.aiPinnedUntil = Date.now() + 120000
+      if (!c.viewCreated) await goLive(c)
+      else { c.live = true; scheduleLayout() }
+      const t0 = Date.now()
+      while (Date.now() - t0 < 12000) {
+        if (c.everLoaded && c.viewReady) break
+        await sleep(200)
+      }
+      return { ok: true, loaded: !!c.everLoaded }
+    }
+    case 'card_glow': {
+      const c = cards.get(args.card_id)
+      if (c) c.el.classList.toggle('aiglow', !!args.on)
+      return { ok: true }
+    }
+    default:
+      throw new Error('unknown canvas verb: ' + verb)
+  }
+}
+
+drift.onAICanvas(async ({ rpcId, verb, args }) => {
+  try {
+    const result = await runAICanvas(verb, args || {})
+    drift.aiCanvasResult({ rpcId, ok: true, result })
+  } catch (err) {
+    drift.aiCanvasResult({ rpcId, ok: false, error: String((err && err.message) || err) })
+  }
+})
+
 drift.onUIKey(({ key }) => {
   if (tourOpen && key !== 'escape' && key !== 'tour') return
   switch (key) {
@@ -3171,6 +3272,17 @@ async function runSelftest() {
     await sleep(300)
 
     report.v2 = { zones: zones.size, searchHits: report.searchHits, tourSteps: TOUR_STEPS.length, folders: true, vault: true }
+
+    // ---- AI assistant: drive the whole agent spine offline (mock provider) ----
+    // Exercises providers.stream + the tool loop + the canvas RPC round-trip
+    // (the mock model calls list_cards, which runs in this renderer).
+    const ai = await drift.aiSelftest()
+    report.ai = ai
+    if (!ai || !ai.ok) report.errors.push('ai selftest failed: ' + (ai && ai.error))
+    else {
+      if (!ai.toolRan) report.errors.push('ai agent did not run a tool')
+      if (!ai.text || !ai.text.trim()) report.errors.push('ai agent produced no text')
+    }
   } catch (err) {
     report.errors.push(String(err && err.stack || err))
   }

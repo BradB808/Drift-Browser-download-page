@@ -40,5 +40,10 @@ contextBridge.exposeInMainWorld('drift', {
   onExtAdoptTab: (fn) => ipcRenderer.on('ext:adoptTab', (_e, d) => fn(d)),
   onExtSelectTab: (fn) => ipcRenderer.on('ext:selectTab', (_e, d) => fn(d)),
   onExtRemoveTab: (fn) => ipcRenderer.on('ext:removeTab', (_e, d) => fn(d)),
-  onSpawnUrl: (fn) => ipcRenderer.on('view:spawnUrl', (_e, d) => fn(d))
+  onSpawnUrl: (fn) => ipcRenderer.on('view:spawnUrl', (_e, d) => fn(d)),
+  aiToggle: () => ipcRenderer.send('ai:toggle'),
+  aiSelftest: () => ipcRenderer.invoke('ai:selftest'),
+  aiCanvasResult: (payload) => ipcRenderer.send('ai:canvasResult', payload),
+  onAICanvas: (fn) => ipcRenderer.on('ai:canvas', (_e, d) => fn(d)),
+  onAIDock: (fn) => ipcRenderer.on('ai:dock', (_e, d) => fn(d))
 })

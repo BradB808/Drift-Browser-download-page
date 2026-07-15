@@ -3,7 +3,7 @@
 // per canvas card. The renderer is the canvas UI; it tells us where each live
 // page should sit on screen and at what zoom, and we position the native views.
 
-const { app, BrowserWindow, WebContentsView, ipcMain, Menu, shell, dialog, session } = require('electron')
+const { app, BrowserWindow, WebContentsView, ipcMain, Menu, shell, dialog, session, safeStorage } = require('electron')
 const path = require('path')
 const fs = require('fs')
 
@@ -30,6 +30,7 @@ app.userAgentFallback = app.userAgentFallback
   .replace(/\sElectron\/[\d.]+/, '')
 
 let win = null
+let ai = null // AI assistant hub (ai/index.js), wired in whenReady
 const views = new Map() // id -> { view, attached, zoom }
 
 const stateFile = () => path.join(app.getPath('userData'), 'drift-state.json')
@@ -169,11 +170,12 @@ ipcMain.on('view:layout', (e, { zoom, items }) => {
   if (!fromCanvas(e) || !Array.isArray(items)) return
   const z = clampZoom(Number(zoom) || 1)
   const seen = new Set()
+  let attachedAny = false
   for (const it of items) {
     const m = views.get(it.id)
     if (!m) continue
     seen.add(it.id)
-    if (!m.attached) { win.contentView.addChildView(m.view); m.attached = true; topViewId = it.id }
+    if (!m.attached) { win.contentView.addChildView(m.view); m.attached = true; topViewId = it.id; attachedAny = true }
     // setBounds forces a compositor re-commit even for identical values, which
     // costs frames while a video plays — only call it when something moved.
     const b = {
@@ -205,6 +207,8 @@ ipcMain.on('view:layout', (e, { zoom, items }) => {
       if (focused) win.webContents.focus()
     }
   }
+  // Freshly attached page views land above the AI dock — bump it back on top.
+  if (attachedAny && ai) ai.ensureOnTop()
 })
 
 // Which view sits on top of the native stack; raising it again would be a
@@ -219,6 +223,7 @@ ipcMain.on('view:raise', (e, id) => {
   if (m.attached && win && !win.isDestroyed() && topViewId !== id) {
     win.contentView.addChildView(m.view)
     topViewId = id
+    if (ai) ai.ensureOnTop() // the AI dock stays above raised pages
   }
   // Tell the extension system this is the active tab, so its action icons update.
   selectExtTab(m.view.webContents)
@@ -774,6 +779,19 @@ app.whenReady().then(async () => {
   }
   buildMenu()
   createWindow()
+  // AI assistant hub. Runs in selftest too (with the offline mock provider),
+  // so the agent spine gets exercised by the standard gate.
+  if (SELFTEST) process.env.DRIFT_AI_MOCK = '1'
+  try {
+    const { setupAI } = require('./ai')
+    ai = setupAI({
+      app, ipcMain, safeStorage, shell, WebContentsView,
+      getWindow: () => win,
+      views, sendUI, fromCanvas,
+      headless: SELFTEST || PROMO,
+      selftest: SELFTEST
+    })
+  } catch (err) { console.log('[drift] ai setup: ' + err.message) }
   // Set up the extension system + Chrome Web Store (skipped in headless runs).
   if (!SELFTEST && !PROMO) { setupExtensions().catch(err => console.log('[drift] ext setup: ' + err.message)) }
   checkForUpdates()
