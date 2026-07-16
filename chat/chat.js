@@ -447,7 +447,7 @@
 
   function buildEmpty() {
     empty.innerHTML = ''
-    empty.appendChild(el('div', { class: 'emark', text: 'D' }))
+    empty.appendChild(el('div', { class: 'emark', text: 'DRIFT' }))
     empty.appendChild(el('div', { class: 'etitle', text: 'Chat with your canvas' }))
     empty.appendChild(el('div', { class: 'esub', text: 'I can see your cards and open, read, or act on them. Ask away.' }))
     const examples = [

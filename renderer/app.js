@@ -3364,28 +3364,84 @@ function applyBackground() {
 // `npm run promoshot` stages a biology research canvas — a trail of connected
 // pages inside a zone — and captures the window for the landing page.
 
+// Staged canvases for marketing shots. Each scene is a themed web of real
+// pages; `dock` reserves the AI-dock strip so a chat capture can be composited
+// into the frame afterwards (the dock is a native view — it can't appear in a
+// canvas-DOM capture directly).
+const PROMO_SCENES = {
+  biology: {
+    zone: { x: -120, y: -400, w: 2940, h: 2090, name: 'Biology', color: '#6ee7a0' },
+    dock: 400,
+    cards: [
+      ['https://en.wikipedia.org/wiki/Cell_(biology)', 0, 340],
+      ['https://en.wikipedia.org/wiki/DNA', 950, -120],
+      ['https://en.wikipedia.org/wiki/Mitochondrion', 950, 800],
+      ['https://en.wikipedia.org/wiki/CRISPR_gene_editing', 1900, -280],
+      ['https://en.wikipedia.org/wiki/Evolution', 1900, 360],
+      ['https://en.wikipedia.org/wiki/Photosynthesis', 1900, 1000]
+    ],
+    edges: [[0, 1], [0, 2], [1, 3], [1, 4], [2, 5]],
+    active: 1
+  },
+  streaming: {
+    zone: { x: -120, y: -400, w: 2940, h: 2090, name: 'Movie night', color: '#ff6f91' },
+    // Logged-out streaming HOMEpages photograph badly (empty shells, consent
+    // walls) — these routes all paint rich content without an account.
+    settle: 15000,
+    cards: [
+      ['https://www.netflix.com/', 0, 340],
+      ['https://www.youtube.com/movies', 950, -120],
+      ['https://www.themoviedb.org/', 950, 800],
+      ['https://www.justwatch.com/ca', 1900, -280],
+      ['https://www.primevideo.com/', 1900, 360],
+      ['https://www.imdb.com/chart/top/', 1900, 1000]
+    ],
+    edges: [[0, 2], [0, 4], [1, 3], [2, 5]],
+    active: 0
+  },
+  research: {
+    zone: { x: -120, y: -400, w: 2940, h: 2090, name: 'Space research', color: '#b78cff' },
+    cards: [
+      ['https://en.wikipedia.org/wiki/James_Webb_Space_Telescope', 0, 340],
+      ['https://en.wikipedia.org/wiki/Black_hole', 950, -120],
+      ['https://en.wikipedia.org/wiki/Mars', 950, 800],
+      ['https://en.wikipedia.org/wiki/Exoplanet', 1900, -280],
+      ['https://en.wikipedia.org/wiki/SpaceX_Starship', 1900, 360],
+      ['https://en.wikipedia.org/wiki/International_Space_Station', 1900, 1000]
+    ],
+    edges: [[0, 1], [0, 3], [2, 4], [2, 5]],
+    active: 0
+  },
+  travel: {
+    zone: { x: -120, y: -400, w: 2940, h: 2090, name: 'Tokyo trip', color: '#ffd166' },
+    cards: [
+      ['https://en.wikivoyage.org/wiki/Tokyo', 0, 340],
+      ['https://en.wikipedia.org/wiki/Tokyo', 950, -120],
+      ['https://www.japan-guide.com/', 950, 800],
+      ['https://en.wikipedia.org/wiki/Mount_Fuji', 1900, -280],
+      ['https://en.wikipedia.org/wiki/Shinkansen', 1900, 360],
+      ['https://en.wikipedia.org/wiki/Kyoto', 1900, 1000]
+    ],
+    edges: [[0, 1], [0, 2], [1, 3], [1, 4], [2, 5]],
+    active: 0
+  }
+}
+
 async function runPromoshot() {
+  const scene = PROMO_SCENES[new URLSearchParams(location.search).get('scene')] || PROMO_SCENES.biology
   const W = 780, H = 560
   const mk = (url, x, y) => createCard({ url, x, y, w: W, h: H })
-  const cell = mk('https://en.wikipedia.org/wiki/Cell_(biology)', 0, 340)
-  const dna = mk('https://en.wikipedia.org/wiki/DNA', 950, -120)
-  const mito = mk('https://en.wikipedia.org/wiki/Mitochondrion', 950, 800)
-  const crispr = mk('https://en.wikipedia.org/wiki/CRISPR_gene_editing', 1900, -280)
-  const evo = mk('https://en.wikipedia.org/wiki/Evolution', 1900, 360)
-  const photo = mk('https://en.wikipedia.org/wiki/Photosynthesis', 1900, 1000)
-  addEdge(cell.id, dna.id)
-  addEdge(cell.id, mito.id)
-  addEdge(dna.id, crispr.id)
-  addEdge(dna.id, evo.id)
-  addEdge(mito.id, photo.id)
-  createZone({ x: -120, y: -400, w: 2940, h: 2090, name: 'Biology', color: '#6ee7a0' })
-  setActive(dna.id)
+  const all = scene.cards.map(([url, x, y]) => mk(url, x, y))
+  for (const [a, b] of scene.edges) addEdge(all[a].id, all[b].id)
+  createZone(scene.zone)
+  setActive(all[scene.active || 0].id)
+  // Reserve the dock strip so the framing matches how the shot composites.
+  if (scene.dock) aiDockW = scene.dock
 
   // Hold the view above the live threshold so every page loads and paints.
-  const all = [cell, dna, mito, crispr, evo, photo]
   const bbLoad = contentBBox()
   V.s = 0.45
-  V.ox = innerWidth / 2 - (bbLoad.x + bbLoad.w / 2) * V.s
+  V.ox = viewW() / 2 - (bbLoad.x + bbLoad.w / 2) * V.s
   V.oy = TOOLBAR + (innerHeight - TOOLBAR) / 2 - (bbLoad.y + bbLoad.h / 2) * V.s
   scheduleLayout()
   const t0 = Date.now()
@@ -3393,8 +3449,16 @@ async function runPromoshot() {
     if (all.every(x => x.everLoaded)) break
     await sleep(300)
   }
-  await sleep(2000)
-  for (const x of all) await takeSnapshot(x, true)
+  await sleep(scene.settle || 2000)
+  // Every card needs a thumbnail before the zoom-out — capturePage drops
+  // frames while the window is occluded or a page is mid-paint, so retry
+  // until each one lands.
+  const s0 = Date.now()
+  while (Date.now() - s0 < 25000) {
+    for (const x of all) if (!x.snapshot) await takeSnapshot(x, true)
+    if (all.every(x => x.snapshot)) break
+    await sleep(500)
+  }
 
   // Wait for the photo backdrop so the shot has the full look.
   const b0 = Date.now()
@@ -3402,16 +3466,26 @@ async function runPromoshot() {
 
   // Frame the constellation below the live threshold so thumbnails render.
   const bb = contentBBox()
-  const s = Math.min(0.36, (innerWidth - 220) / bb.w)
+  const s = Math.min(0.36, (viewW() - 220) / bb.w)
   animateView({
     s,
-    ox: innerWidth / 2 - (bb.x + bb.w / 2) * s,
+    ox: viewW() / 2 - (bb.x + bb.w / 2) * s,
     oy: TOOLBAR + (innerHeight - TOOLBAR) / 2 - (bb.y + bb.h / 2) * s
   }, 250)
-  await sleep(1500)
+  // The glide is rAF-driven — verify it actually landed (an occluded window
+  // suspends rAF and would freeze the shot at the load zoom).
+  const g0 = Date.now()
+  while (Date.now() - g0 < 10000 && (Math.abs(V.s - s) > 0.001 || viewFreeze)) await sleep(200)
+  await sleep(1200)
   toastEl.classList.remove('show')
   await sleep(400)
-  await drift.selftestDone({ errors: [], promo: true, cards: all.map(x => ({ url: x.url, loaded: x.everLoaded })) })
+  await drift.selftestDone({
+    errors: [],
+    promo: true,
+    landed: Math.abs(V.s - s) <= 0.001,
+    snapshots: all.filter(x => !!x.snapshot).length,
+    cards: all.map(x => ({ url: x.url, loaded: x.everLoaded }))
+  })
 }
 
 // ---------- boot ----------

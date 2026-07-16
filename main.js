@@ -746,7 +746,11 @@ function createWindow() {
       sandbox: false
     }
   })
-  win.loadFile('renderer/index.html', { query: SELFTEST ? { selftest: '1' } : PROMO ? { promo: '1' } : {} })
+  win.loadFile('renderer/index.html', {
+    query: SELFTEST ? { selftest: '1' }
+      : PROMO ? { promo: '1', scene: process.env.DRIFT_PROMO_SCENE || 'biology' }
+      : {}
+  })
   win.on('closed', () => { win = null })
 }
 

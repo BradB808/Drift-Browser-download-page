@@ -123,11 +123,11 @@ html, body {
   text-shadow: 0 1px 10px rgba(0, 0, 0, 0.4);
 }
 .brand .bmark {
-  /* Drift's own mark — a heavy D in the two-tone gradient (a four-point star
-     reads as someone else's logo). */
-  font-size: 16px;
+  /* Drift's own wordmark in the two-tone gradient (a four-point star reads
+     as someone else's logo). Tracks the toolbar brand's lettering. */
+  font-size: 13.5px;
   font-weight: 800;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.16em;
   background: linear-gradient(135deg, var(--accent), var(--accent2));
   -webkit-background-clip: text;
   background-clip: text;
@@ -802,8 +802,10 @@ html, body {
   padding: 44px 20px 24px;
 }
 #empty .emark {
-  font-size: 44px;
+  font-size: 30px;
   font-weight: 800;
+  letter-spacing: 0.18em;
+  padding-left: 0.18em; /* optically recenter the tracked-out caps */
   background: linear-gradient(135deg, var(--accent), var(--accent2));
   -webkit-background-clip: text;
   background-clip: text;
