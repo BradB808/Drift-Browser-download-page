@@ -19,6 +19,8 @@ contextBridge.exposeInMainWorld('driftAI', {
   clearChats: () => ipcRenderer.invoke('ai:chatsClear'),
   cards: () => ipcRenderer.invoke('ai:cards'),
   send: (msg) => ipcRenderer.send('ai:send', msg),
+  // Re-run a failed turn from the stored history — no new user message.
+  retry: (chatId) => ipcRenderer.send('ai:retry', { chatId }),
   // A chatId targets one chat's turn; omit it to stop whatever is running.
   stop: (chatId) => ipcRenderer.send('ai:stop', { chatId }),
   permissionReply: (requestId, decision) => ipcRenderer.send('ai:permReply', { requestId, decision }),

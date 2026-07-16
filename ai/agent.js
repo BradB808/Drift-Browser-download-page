@@ -101,11 +101,23 @@ function createAgent({ store, providers, tools, emit, requestPermission }) {
     const blocks = Array.isArray(userBlocks) ? userBlocks : []
     const firstTurn = !chat.messages.some(m => m.role === 'user')
 
-    chat.messages.push({ role: 'user', content: blocks })
-    chat.updatedAt = Date.now()
-    if (firstTurn) chat.title = titleFrom(blocks)
-    store.saveChat(chat)
-    if (firstTurn) emit(chat.id, { type: 'title', title: chat.title })
+    // Empty blocks = a retry: re-run from the stored history (whose tail is
+    // already the user's message) without adding anything to it.
+    if (blocks.length) {
+      // A stopped turn can leave a user message (tool results, or text the model
+      // never answered) at the tail — strict providers reject two user messages
+      // in a row, so fold the new text into it instead of pushing a sibling.
+      const last = chat.messages[chat.messages.length - 1]
+      if (last && last.role === 'user' && Array.isArray(last.content)) last.content.push(...blocks)
+      else chat.messages.push({ role: 'user', content: blocks })
+      chat.updatedAt = Date.now()
+      if (firstTurn) chat.title = titleFrom(blocks)
+      store.saveChat(chat)
+      if (firstTurn) emit(chat.id, { type: 'title', title: chat.title })
+    } else if (!chat.messages.some(m => m.role === 'user')) {
+      emit(chat.id, { type: 'error', message: 'nothing to retry yet' })
+      return
+    }
 
     const system = SYSTEM_PROMPT + '\n\nThe current date is ' + new Date().toDateString() + '.'
     const toolDefs = tools.definitions()
@@ -122,6 +134,7 @@ function createAgent({ store, providers, tools, emit, requestPermission }) {
           messages: chat.messages,
           tools: toolDefs,
           maxTokens: MAX_OUTPUT_TOKENS,
+          chatId: chat.id,
           signal,
           onEvent: ev => {
             if (!ev || typeof ev.delta !== 'string') return
@@ -162,6 +175,23 @@ function createAgent({ store, providers, tools, emit, requestPermission }) {
       const toolUses = content.filter(b => b && b.type === 'tool_use')
 
       if (result.stopReason !== 'tool_use' || !toolUses.length) {
+        // A cut-off turn (max_tokens, dropped stream) can still carry tool_use
+        // blocks. History with a tool_use and no tool_result is rejected by
+        // every provider on the NEXT request — the chat would be bricked.
+        // Close each one out with a synthetic error result before returning.
+        if (toolUses.length) {
+          chat.messages.push({
+            role: 'user',
+            content: toolUses.map(tu => ({
+              type: 'tool_result',
+              tool_use_id: tu.id,
+              content: 'The response was cut off before this tool could run.',
+              is_error: true
+            }))
+          })
+          chat.updatedAt = Date.now()
+          store.saveChat(chat)
+        }
         if (result.stopReason === 'error') {
           emit(chat.id, { type: 'error', message: 'the response ended with an error' })
           return

@@ -135,6 +135,10 @@ function createProviders(deps) {
 
   // ---------- descriptors ----------
 
+  // Local runtimes have no stored secret — "connected" is the last detectLocal
+  // result, so a successful Detect makes them pickable in the model menu.
+  const localState = { ollama: null, lmstudio: null }
+
   function descriptors() {
     const has = (name) => !!store.getSecret(name)
     const list = [
@@ -143,9 +147,8 @@ function createProviders(deps) {
       { id: 'chatgpt', label: 'ChatGPT', kind: 'oauth', connected: has('chatgpt') },
       { id: 'openrouter', label: 'OpenRouter', kind: 'oauth', connected: has('openrouter') },
       { id: 'gemini', label: 'Google Gemini', kind: 'key', connected: has('gemini') },
-      // Local runtimes report connectivity through detectLocal(), not here.
-      { id: 'ollama', label: 'Ollama', kind: 'local', connected: false },
-      { id: 'lmstudio', label: 'LM Studio', kind: 'local', connected: false },
+      { id: 'ollama', label: 'Ollama', kind: 'local', connected: !!(localState.ollama && localState.ollama.up) },
+      { id: 'lmstudio', label: 'LM Studio', kind: 'local', connected: !!(localState.lmstudio && localState.lmstudio.up) },
       { id: 'custom', label: 'Custom', kind: 'custom', connected: has('custom') }
     ]
     if (process.env.DRIFT_AI_MOCK === '1') list.push({ id: 'mock', label: 'Mock', kind: 'key', connected: true })
@@ -252,6 +255,8 @@ function createProviders(deps) {
       probe('http://localhost:11434'),
       probe('http://localhost:1234')
     ])
+    localState.ollama = ollama
+    localState.lmstudio = lmstudio
     return { ollama, lmstudio }
   }
 
@@ -402,11 +407,21 @@ function createProviders(deps) {
         continue
       }
       // user message: tool_result blocks become their own role:'tool' messages,
-      // text/image blocks become one user message.
+      // text/image blocks become one user message. Tool outputs can only be
+      // strings in this API, so an image-bearing result (a screenshot) sends a
+      // pointer as the tool output and the actual image as a user message part.
       const parts = []
       for (const b of asBlocks(m.content)) {
         if (b.type === 'tool_result') {
-          out.push({ role: 'tool', tool_call_id: b.tool_use_id, content: toolResultText(b.content) })
+          const images = Array.isArray(b.content) ? b.content.filter((x) => x && x.type === 'image') : []
+          out.push({
+            role: 'tool',
+            tool_call_id: b.tool_use_id,
+            content: images.length ? 'The captured image is attached below.' : toolResultText(b.content)
+          })
+          for (const im of images) {
+            parts.push({ type: 'image_url', image_url: { url: 'data:' + (im.media_type || 'image/jpeg') + ';base64,' + im.data } })
+          }
         } else if (b.type === 'text') {
           parts.push({ type: 'text', text: b.text || '' })
         } else if (b.type === 'image') {
@@ -437,17 +452,31 @@ function createProviders(deps) {
       throw new Error(labelFor(id) + ': not connected — add a key or sign in')
     }
     const body = { model: opts.model, messages: toOpenAIMessages(opts.system, opts.messages), stream: true }
-    if (opts.maxTokens) body.max_tokens = opts.maxTokens
+    // OpenAI's current model families reject max_tokens outright ("use
+    // max_completion_tokens"); most compat servers only know max_tokens. Start
+    // with the right one per endpoint and swap once if the server corrects us.
+    let tokenParam = id === 'openai' ? 'max_completion_tokens' : 'max_tokens'
+    if (opts.maxTokens) body[tokenParam] = opts.maxTokens
     if (opts.tools && opts.tools.length) {
       body.tools = toOpenAITools(opts.tools)
       if (!cfg.noToolChoice) body.tool_choice = 'auto'
     }
-    const res = await doFetch(cfg.base + '/chat/completions', {
+    const send = () => doFetch(cfg.base + '/chat/completions', {
       method: 'POST',
       headers: compatHeaders(cfg, { 'content-type': 'application/json', accept: 'text/event-stream' }),
       body: JSON.stringify(body),
       signal: opts.signal
     })
+    let res = await send()
+    if (res.status === 400 && opts.maxTokens) {
+      const errText = await res.clone().text().catch(() => '')
+      if (/max_(completion_)?tokens/.test(errText)) {
+        delete body[tokenParam]
+        tokenParam = tokenParam === 'max_tokens' ? 'max_completion_tokens' : 'max_tokens'
+        body[tokenParam] = opts.maxTokens
+        res = await send()
+      }
+    }
     if (!res.ok) throw await httpError(labelFor(id), res)
     return consumeOpenAI(res, opts, labelFor(id))
   }
@@ -547,8 +576,19 @@ function createProviders(deps) {
       }
       const parts = []
       for (const b of asBlocks(m.content)) {
-        if (b.type === 'tool_result') items.push({ type: 'function_call_output', call_id: b.tool_use_id, output: toolResultText(b.content) })
-        else if (b.type === 'text') parts.push({ type: 'input_text', text: b.text || '' })
+        if (b.type === 'tool_result') {
+          // Same string-only constraint as Chat Completions: images ride as a
+          // user message part right after the function output.
+          const images = Array.isArray(b.content) ? b.content.filter((x) => x && x.type === 'image') : []
+          items.push({
+            type: 'function_call_output',
+            call_id: b.tool_use_id,
+            output: images.length ? 'The captured image is attached below.' : toolResultText(b.content)
+          })
+          for (const im of images) {
+            parts.push({ type: 'input_image', image_url: 'data:' + (im.media_type || 'image/jpeg') + ';base64,' + im.data })
+          }
+        } else if (b.type === 'text') parts.push({ type: 'input_text', text: b.text || '' })
         else if (b.type === 'image') parts.push({ type: 'input_image', image_url: 'data:' + (b.media_type || 'image/jpeg') + ';base64,' + b.data })
       }
       if (parts.length) items.push({ type: 'message', role: 'user', content: parts })

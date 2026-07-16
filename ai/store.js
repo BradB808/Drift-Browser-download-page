@@ -37,9 +37,44 @@ function createAiStore({ userDataDir, safeStorage, headless }) {
   let chats = disk ? readJson(chatsFile, []) : []
   if (!Array.isArray(chats)) chats = []
 
+  // tmp+rename so a crash mid-write can't truncate the file — readJson would
+  // silently swallow the corrupt JSON and the data would look "gone".
+  const writeAtomic = (file, json) => {
+    try {
+      fs.writeFileSync(file + '.tmp', json)
+      fs.renameSync(file + '.tmp', file)
+    } catch {}
+  }
+
   const persist = () => {
     if (!disk) return
-    try { fs.writeFileSync(aiFile, JSON.stringify({ secrets, meta }, null, 2)) } catch {}
+    writeAtomic(aiFile, JSON.stringify({ secrets, meta }, null, 2))
+  }
+
+  const MAX_CHATS = 100
+
+  // What goes to disk: image blocks (screenshots, ~100KB+ of base64 each) are
+  // session-only — persisting them would balloon the file and make every
+  // coalesced save a main-thread stringify of megabytes. Oldest chats fall off
+  // past MAX_CHATS.
+  const chatsForDisk = () => {
+    const slim = chats.map(c => ({
+      ...c,
+      messages: (c.messages || []).map(m => ({
+        ...m,
+        content: (Array.isArray(m.content) ? m.content : []).map(b => {
+          if (b && b.type === 'image') return { type: 'text', text: '[screenshot — not saved]' }
+          if (b && b.type === 'tool_result' && Array.isArray(b.content)) {
+            return {
+              ...b,
+              content: b.content.map(x => (x && x.type === 'image' ? { type: 'text', text: '[screenshot — not saved]' } : x))
+            }
+          }
+          return b
+        })
+      }))
+    }))
+    return slim.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, MAX_CHATS)
   }
 
   // Chat saves stream in on every turn — coalesce them into one async write.
@@ -48,8 +83,21 @@ function createAiStore({ userDataDir, safeStorage, headless }) {
     if (!disk || chatTimer) return
     chatTimer = setTimeout(() => {
       chatTimer = null
-      fs.writeFile(chatsFile, JSON.stringify(chats), () => {})
+      const json = JSON.stringify(chatsForDisk())
+      fs.writeFile(chatsFile + '.tmp', json, (err) => {
+        if (err) return
+        fs.rename(chatsFile + '.tmp', chatsFile, () => {})
+      })
     }, 250)
+  }
+
+  // Quit path: a pending debounce or in-flight async write dies with the
+  // process — force the write synchronously.
+  const flush = () => {
+    if (!disk || !chatTimer) return
+    clearTimeout(chatTimer)
+    chatTimer = null
+    writeAtomic(chatsFile, JSON.stringify(chatsForDisk()))
   }
 
   const getSecret = (name) => {
@@ -102,8 +150,12 @@ function createAiStore({ userDataDir, safeStorage, headless }) {
 
   const getChat = (id) => chats.find((c) => c.id === id) || null
 
+  // A turn that is still streaming keeps saving its chat object — deleting that
+  // chat must stick, so deletions leave a tombstone that saveChat honors.
+  const deleted = new Set()
+
   const saveChat = (chat) => {
-    if (!chat || typeof chat.id !== 'string') return
+    if (!chat || typeof chat.id !== 'string' || deleted.has(chat.id)) return
     const i = chats.findIndex((c) => c.id === chat.id)
     if (i >= 0) chats[i] = chat
     else chats.push(chat)
@@ -111,16 +163,18 @@ function createAiStore({ userDataDir, safeStorage, headless }) {
   }
 
   const deleteChat = (id) => {
+    deleted.add(id)
     chats = chats.filter((c) => c.id !== id)
     persistChats()
   }
 
   const clearChats = () => {
+    for (const c of chats) deleted.add(c.id)
     chats = []
     persistChats()
   }
 
-  return { getSecret, setSecret, getMeta, setMeta, listChats, getChat, saveChat, deleteChat, clearChats }
+  return { getSecret, setSecret, getMeta, setMeta, listChats, getChat, saveChat, deleteChat, clearChats, flush }
 }
 
 module.exports = { createAiStore }

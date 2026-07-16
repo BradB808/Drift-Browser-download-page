@@ -22,8 +22,9 @@
 
   // ---------- state ----------
 
-  let cfg = { providers: [], prefs: {}, custom: {}, encryptionAvailable: true }
+  let cfg = { providers: [], prefs: {}, custom: {}, allowlist: {}, encryptionAvailable: true }
   let currentChatId = null
+  const fenced = new Set()   // chat ids abandoned mid-stream; their events are dropped
   let streaming = false
   let turn = null            // active assistant turn: { el, textEl, thinkEl, pendingTools }
   let pendingUserEl = null   // the optimistic user bubble text node awaiting its echo
@@ -217,13 +218,30 @@
     turn = null
   }
 
+  // Streamed deltas arrive far faster than 60Hz — re-rendering the whole
+  // message per delta is quadratic and forces a reflow each time. Accumulate
+  // raw text immediately, paint at most once per animation frame.
+  let paintQueued = false
+  const paintJobs = new Set()
+  function queuePaint(job) {
+    paintJobs.add(job)
+    if (paintQueued) return
+    paintQueued = true
+    requestAnimationFrame(() => {
+      paintQueued = false
+      const jobs = [...paintJobs]
+      paintJobs.clear()
+      for (const j of jobs) j()
+      maybeScroll()
+    })
+  }
+
   function onText(delta) {
     const t = ensureTurn()
     t.thinkEl = null
     const md = t.textEl || newTextEl()
     md._raw += delta || ''
-    md.innerHTML = renderMarkdown(md._raw)
-    maybeScroll()
+    queuePaint(() => { if (md.isConnected) md.innerHTML = renderMarkdown(md._raw) })
   }
 
   function onThinking(delta) {
@@ -237,13 +255,13 @@
       body._raw = ''
       th.appendChild(hdr)
       th.appendChild(body)
+      th._body = body
       t.el.appendChild(th)
       t.thinkEl = th
     }
-    const body = th.querySelector('.thinkbody')
+    const body = th._body || th.querySelector('.thinkbody')
     body._raw += delta || ''
-    body.textContent = body._raw
-    maybeScroll()
+    queuePaint(() => { if (body.isConnected) body.textContent = body._raw })
   }
 
   function toolLabel(name) {
@@ -284,28 +302,44 @@
     maybeScroll()
   }
 
+  const permCards = new Map() // requestId -> { card, choice }
+
   function onPermission(ev) {
     const t = ensureTurn()
     t.textEl = null
     t.thinkEl = null
-    const actionWord = ev.action === 'type' ? 'type into pages' : 'click on pages'
+    const actionWord = ev.action === 'type' ? 'type into pages'
+      : ev.action === 'open' ? 'open pages from this site'
+      : 'click on pages'
     const card = el('div', { class: 'perm' })
     card.appendChild(el('div', { class: 'permq', html: 'Allow the assistant to act on <b>' + escapeHtml(ev.origin || 'this site') + '</b>?' }))
     card.appendChild(el('div', { class: 'permsub', text: 'It wants to ' + actionWord + ' here.' }))
     const choice = el('div', { class: 'permchoice' })
-    const reply = (decision, labelText) => {
-      driftAI.permissionReply(ev.requestId, decision)
-      card.classList.add('done')
-      choice.textContent = labelText
-    }
+    // The click only SENDS the reply — main echoes permission_done with what
+    // actually took effect, so an expired card can't claim it granted anything.
+    const reply = (decision) => driftAI.permissionReply(ev.requestId, decision)
     const btns = el('div', { class: 'permbtns' },
-      el('button', { class: 'pyes', onclick: () => reply('once', 'Allowed once.') }, 'Allow once'),
-      el('button', { onclick: () => reply('always', 'Always allowed on ' + (ev.origin || 'this site') + '.') }, 'Always'),
-      el('button', { onclick: () => reply('no', 'Declined.') }, 'No'))
+      el('button', { class: 'pyes', onclick: () => reply('once') }, 'Allow once'),
+      el('button', { onclick: () => reply('always') }, 'Always'),
+      el('button', { onclick: () => reply('no') }, 'No'))
     card.appendChild(btns)
     card.appendChild(choice)
+    permCards.set(ev.requestId, { card, choice, origin: ev.origin || 'this site' })
     t.el.appendChild(card)
     maybeScroll()
+  }
+
+  function onPermissionDone(ev) {
+    const rec = permCards.get(ev.requestId)
+    if (!rec) return
+    permCards.delete(ev.requestId)
+    rec.card.classList.add('done')
+    rec.choice.textContent =
+      ev.decision === 'once' ? 'Allowed once.'
+      : ev.decision === 'always' ? 'Always allowed on ' + rec.origin + '.'
+      : ev.decision === 'no' ? 'Declined.'
+      : ev.decision === 'timeout' || ev.decision === 'expired' ? 'Request expired.'
+      : 'Dismissed.'
   }
 
   function onError(message) {
@@ -313,7 +347,17 @@
     turn = null
     const banner = el('div', { class: 'errbanner' })
     banner.appendChild(el('div', { class: 'emsg', text: message || 'Something went wrong.' }))
-    banner.appendChild(el('button', { class: 'eretry', onclick: () => { banner.remove(); if (lastUserText) doSend(lastUserText) } }, 'Retry'))
+    // Retry re-runs the stored turn in main — re-SENDING the text would put the
+    // question in the history twice and drop the attached-card context.
+    banner.appendChild(el('button', {
+      class: 'eretry',
+      onclick: () => {
+        if (!currentChatId) { banner.remove(); return }
+        banner.remove()
+        setStreaming(true)
+        driftAI.retry(currentChatId)
+      }
+    }, 'Retry'))
     transcript.appendChild(banner)
     hideEmpty()
     maybeScroll()
@@ -330,8 +374,18 @@
 
   function handleEvent(chatId, event) {
     if (!event) return
-    if (event.type === 'chat') { currentChatId = event.chatId || chatId; return }
-    // Events for a background chat (e.g. the user switched away) are ignored.
+    // permission_done must reach its card even if the user has since switched
+    // chats — the pending card lives in whatever transcript spawned it.
+    if (event.type === 'permission_done') { onPermissionDone(event); return }
+    if (event.type === 'chat') {
+      if (!fenced.has(event.chatId || chatId)) currentChatId = event.chatId || chatId
+      return
+    }
+    // Events for a background or dismissed chat are ignored. "New chat" sets
+    // currentChatId to null, so fenced ids (chats the user walked away from
+    // mid-stream) are filtered explicitly — without this the old answer would
+    // stream into the fresh empty transcript.
+    if (chatId && fenced.has(chatId)) return
     if (chatId && currentChatId && chatId !== currentChatId) return
     switch (event.type) {
       case 'user': onUser(event.block); break
@@ -454,9 +508,10 @@
 
   async function refreshConfig(rerenderConn) {
     const got = await driftAI.config()
-    cfg = got || { providers: [], prefs: {}, custom: {}, encryptionAvailable: true }
+    cfg = got || { providers: [], prefs: {}, custom: {}, allowlist: {}, encryptionAvailable: true }
     cfg.prefs = cfg.prefs || {}
     cfg.custom = cfg.custom || {}
+    cfg.allowlist = cfg.allowlist || {}
     await ensureDefaults()
     updateModelPill()
     updateEmptyCTA()
@@ -511,10 +566,36 @@
     for (const c of list) {
       const row = el('div', { class: 'histrow' + (c.id === currentChatId ? ' on' : '') })
       row.appendChild(el('div', { class: 'histtitle', text: c.title || 'Untitled chat', onclick: () => { closeMenus(); loadChat(c.id) } }))
-      row.appendChild(el('button', { class: 'histdel', title: 'Delete chat', onclick: (e) => { e.stopPropagation(); delChat(c.id) } }, '×'))
+      // Deletes are irreversible and the × sits right next to the open target —
+      // first click arms it, second click (within a beat) deletes.
+      const del = el('button', { class: 'histdel', title: 'Delete chat' }, '×')
+      del.addEventListener('click', (e) => {
+        e.stopPropagation()
+        if (!del._armed) {
+          del._armed = true
+          del.textContent = 'Delete?'
+          del.classList.add('armed')
+          setTimeout(() => { if (del.isConnected) { del._armed = false; del.textContent = '×'; del.classList.remove('armed') } }, 2500)
+          return
+        }
+        delChat(c.id)
+      })
+      row.appendChild(del)
       historyMenu.appendChild(row)
     }
-    if (list.length) historyMenu.appendChild(el('button', { class: 'menucta danger', onclick: clearAll }, 'Clear all chats'))
+    if (list.length) {
+      const clear = el('button', { class: 'menucta danger' }, 'Clear all chats')
+      clear.addEventListener('click', () => {
+        if (!clear._armed) {
+          clear._armed = true
+          clear.textContent = 'Sure? This deletes every chat'
+          setTimeout(() => { if (clear.isConnected) { clear._armed = false; clear.textContent = 'Clear all chats' } }, 3000)
+          return
+        }
+        clearAll()
+      })
+      historyMenu.appendChild(clear)
+    }
     historyMenu.classList.remove('hidden')
   }
 
@@ -540,6 +621,13 @@
   }
 
   function newChat() {
+    // Walking away from a mid-stream chat: stop it and fence its ids so late
+    // events can't leak into the fresh transcript.
+    if (streaming && currentChatId) {
+      fenced.add(currentChatId)
+      driftAI.stop(currentChatId)
+    }
+    setStreaming(false)
     currentChatId = null
     turn = null
     pendingUserEl = null
@@ -556,7 +644,18 @@
   const PROV = {
     openrouter: { name: 'OpenRouter', kind: 'oauth', caption: 'Connect — free & paid models, no key needed' },
     openai: { name: 'OpenAI', kind: 'key', placeholder: 'sk-…', note: 'API key from platform.openai.com.' },
-    anthropic: { name: 'Claude (Anthropic)', kind: 'key', placeholder: 'sk-ant-…', note: "API key from console.anthropic.com. Subscription sign-in isn't offered — Anthropic limits it to first-party apps." },
+    anthropic: {
+      name: 'Claude (Anthropic)',
+      kind: 'key',
+      placeholder: 'sk-ant-…',
+      note: 'API key from console.anthropic.com.',
+      // Anthropic prohibits third-party apps from offering Claude.ai
+      // subscription login (enforced server-side since early 2026) — the
+      // sanctioned subscription route is their own extension, which Drift
+      // runs as a per-card panel.
+      subNote: 'Have a Claude subscription? Sign-in here isn’t possible — Anthropic allows subscription use only in their own apps. Instead, add the official Claude extension: sign in there and it opens as a panel on any card.',
+      subBtn: { label: 'Get the Claude extension', url: 'https://chromewebstore.google.com/detail/claude/fcoeoabgfenejglbffodgkkbkcdhcgfn' }
+    },
     chatgpt: { name: 'ChatGPT subscription', kind: 'oauth', caption: 'Sign in with ChatGPT — uses your Plus/Pro plan · experimental: Codex models, may change' },
     gemini: { name: 'Google Gemini', kind: 'key', placeholder: 'AIza…', note: 'AI Studio key from aistudio.google.com — has a genuinely free tier.' },
     custom: { name: 'Custom (OpenAI-compatible)', kind: 'custom', note: 'Any OpenAI-compatible endpoint — xAI, Mistral, DeepSeek, LiteLLM, llama.cpp…' }
@@ -583,7 +682,34 @@
       else if (spec.kind === 'oauth') conn.appendChild(renderOauthRow(id, spec, canSave))
       else if (spec.kind === 'custom') conn.appendChild(renderCustomRow(id, spec, canSave))
     }
+    const allowed = renderAllowedSites()
+    if (allowed) conn.appendChild(allowed)
     conn.appendChild(el('div', { class: 'connfoot', text: 'Keys are encrypted with your macOS keychain and never leave this Mac.' }))
+  }
+
+  // Standing "Always" grants must be visible and revocable — a permanent,
+  // invisible license for the assistant to click around a site is a trust bug.
+  function renderAllowedSites() {
+    const origins = Object.keys(cfg.allowlist || {})
+    if (!origins.length) return null
+    const row = el('div', { class: 'prow' })
+    row.appendChild(rowHead('allowed', 'Sites the assistant may act on', true, origins.length + ' allowed'))
+    row.appendChild(el('div', { class: 'pnote', text: 'You chose “Always” for these sites — the assistant clicks and types there without asking.' }))
+    for (const origin of origins.sort()) {
+      const line = el('div', { class: 'pallow' })
+      line.appendChild(el('span', { class: 'pallowname', text: origin }))
+      line.appendChild(el('button', {
+        class: 'pbtn small',
+        onclick: async () => {
+          const next = { ...cfg.allowlist }
+          delete next[origin]
+          await driftAI.setPrefs({ allowlist: next })
+          await refreshConfig(true)
+        }
+      }, 'Revoke'))
+      row.appendChild(line)
+    }
+    return row
   }
 
   function rowHead(id, name, connected, stateText) {
@@ -624,6 +750,19 @@
       row.appendChild(bar)
     }
     if (spec.note) row.appendChild(el('div', { class: 'pnote', text: spec.note }))
+    if (spec.subNote) {
+      const sub = el('div', { class: 'psub' })
+      sub.appendChild(el('div', { class: 'pnote', text: spec.subNote }))
+      if (spec.subBtn) {
+        const bar = el('div', { class: 'pbtnrow' })
+        bar.appendChild(el('button', {
+          class: 'pbtn',
+          onclick: () => driftAI.openUrl(spec.subBtn.url)
+        }, spec.subBtn.label))
+        sub.appendChild(bar)
+      }
+      row.appendChild(sub)
+    }
     row.appendChild(errLine)
     return row
   }
@@ -852,6 +991,9 @@
     const text = (explicitText != null ? explicitText : input.value).trim()
     if (!text) return
     if (!anyConnected() && !isSelftest) { openConn(); return }
+    // No model resolved (e.g. a custom endpoint without /models): sending would
+    // just bounce back as a cryptic provider 400 — point at the picker instead.
+    if (!currentModel() && !isSelftest) { openModelMenu(); return }
     const cards = selectedCards.slice()
     addUserBubble(text, cards, true)
     lastUserText = text
@@ -927,7 +1069,10 @@
   $('btnHistory').addEventListener('click', () => { historyMenu.classList.contains('hidden') ? openHistory() : closeMenus() })
   $('btnNew').addEventListener('click', newChat)
   $('btnConn').addEventListener('click', toggleConn)
-  $('btnClose').addEventListener('click', () => driftAI.close())
+  $('btnClose').addEventListener('click', () => {
+    if (streaming) driftAI.stop(currentChatId) // dismissing the dock dismisses the turn
+    driftAI.close()
+  })
   modelPill.addEventListener('click', () => { modelMenu.classList.contains('hidden') ? openModelMenu() : closeMenus() })
   sendBtn.addEventListener('click', onSendBtn)
   window.addEventListener('focus', () => { if (conn.classList.contains('hidden')) input.focus() })
@@ -940,6 +1085,9 @@
     try { await refreshConfig(false) } catch {}
     showEmpty()
     driftAI.onEvent(handleEvent)
+    // Probe local runtimes once at boot so an Ollama/LM Studio user is
+    // connected without having to find the Detect button first.
+    driftAI.detectLocal().then(() => refreshConfig(true)).catch(() => {})
     input.focus()
     if (isSelftest) {
       window.__aiSelftest = {

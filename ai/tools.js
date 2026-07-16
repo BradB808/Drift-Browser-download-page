@@ -153,22 +153,57 @@ function createTools({ canvasRpc, pageTarget, snapshot, store }) {
     return { wc: t.wc }
   }
 
+  // Distinct failure texts: a real "No" click, a prompt nobody answered, and a
+  // closed chat panel are different situations — the model should not tell the
+  // user they declined something they never saw.
+  function declined(decision, what) {
+    if (decision === 'closed') return err('could not ask permission to ' + what + ' — the chat panel is closed, so reopen it and try again')
+    if (decision === 'timeout') return err('the permission request to ' + what + ' expired without an answer')
+    return err('the user declined to let the assistant ' + what)
+  }
+
+  function grantAlways(origin) {
+    try {
+      const allow = (store.getMeta() || {}).allowlist || {}
+      store.setMeta({ allowlist: Object.assign({}, allow, { [origin]: true }) })
+    } catch {}
+  }
+
   // Per-origin consent for click/type. Returns 'ok' or an is_error object.
   async function ensureAllowed(wc, action, ctx) {
     const origin = originOf(wc)
     if (!origin || origin === '(page)' || origin === 'null') return err('this page has no web origin to act on')
     const meta = store.getMeta() || {}
-    const allow = meta.allowlist || {}
-    if (allow[origin]) return 'ok'
+    if ((meta.allowlist || {})[origin]) return 'ok'
     let decision = 'no'
-    try { decision = await ctx.requestPermission({ origin, action, chatId: ctx.chatId }) }
+    try { decision = await ctx.requestPermission({ origin, action, chatId: ctx.chatId, signal: ctx.signal }) }
     catch { decision = 'no' }
-    if (decision === 'always') {
-      try { store.setMeta({ allowlist: Object.assign({}, allow, { [origin]: true }) }) } catch {}
-      return 'ok'
-    }
+    if (decision === 'always') { grantAlways(origin); return 'ok' }
     if (decision === 'once') return 'ok'
-    return err('the user declined to let the assistant ' + action + ' on ' + origin)
+    return declined(decision, action + ' on ' + origin)
+  }
+
+  // Consent for navigations. Origins the user already has open on the canvas
+  // (or has allowlisted) are free — opening more of what they browse is not a
+  // new grant. Anything else could be an exfiltration URL a hostile page talked
+  // the model into (data in the query string) — that needs a human yes.
+  async function ensureNavAllowed(url, ctx) {
+    let origin
+    try { origin = new URL(url).origin } catch { return err('bad url') }
+    const meta = store.getMeta() || {}
+    if ((meta.allowlist || {})[origin]) return 'ok'
+    try {
+      const cards = await canvasRpc('list_cards')
+      if (Array.isArray(cards) && cards.some(c => {
+        try { return new URL(c.url).origin === origin } catch { return false }
+      })) return 'ok'
+    } catch {}
+    let decision = 'no'
+    try { decision = await ctx.requestPermission({ origin, action: 'open', chatId: ctx.chatId, signal: ctx.signal }) }
+    catch { decision = 'no' }
+    if (decision === 'always') { grantAlways(origin); return 'ok' }
+    if (decision === 'once') return 'ok'
+    return declined(decision, 'open ' + origin)
   }
 
   // Interpret the locate result; returns an is_error object to bail, or null to proceed.
@@ -225,15 +260,17 @@ function createTools({ canvasRpc, pageTarget, snapshot, store }) {
     } catch { return null }
   }
 
-  async function openCard(input) {
+  async function openCard(input, ctx) {
     const url = safeHttp(input.url)
     if (!url) return err('open_card needs an http(s) url')
+    const gate = await ensureNavAllowed(url, ctx)
+    if (gate !== 'ok') return gate
     const res = await canvasRpc('open_card', { url, parent_id: input.parent_id || null })
     const id = res && (res.id || res.card_id) || (typeof res === 'string' ? res : null)
     return id ? ('opened card ' + id) : 'opened the card'
   }
 
-  async function navigateCard(input) {
+  async function navigateCard(input, ctx) {
     const cardId = input.card_id
     if (!cardId) return err('navigate_card needs a card_id')
     const action = input.action || 'url'
@@ -241,6 +278,8 @@ function createTools({ canvasRpc, pageTarget, snapshot, store }) {
     if (action === 'url') {
       const url = safeHttp(input.url)
       if (!url) return err('navigate_card with action "url" needs an http(s) url')
+      const gate = await ensureNavAllowed(url, ctx)
+      if (gate !== 'ok') return gate
       args.url = url
     } else if (!['back', 'forward', 'reload'].includes(action)) {
       return err('navigate_card action must be one of: url, back, forward, reload')

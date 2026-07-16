@@ -848,7 +848,7 @@ function renderCtxMenu(items, x, y) {
   }
   ctxEl.classList.remove('hidden')
   const r = ctxEl.getBoundingClientRect()
-  ctxEl.style.left = clamp(x, 8, innerWidth - r.width - 8) + 'px'
+  ctxEl.style.left = clamp(x, 8, viewW() - r.width - 8) + 'px'
   ctxEl.style.top = clamp(y, TOOLBAR, innerHeight - r.height - 8) + 'px'
   scheduleLayout() // detach live views so the menu is actually on top
 }
@@ -1643,8 +1643,8 @@ function wireGlobalInput() {
     const c = fullId && cards.get(fullId)
     if (c) openPalette({ navigateId: c.id, prefill: c.url })
   })
-  $('#btnZoomIn').addEventListener('click', () => zoomAt(innerWidth / 2, TOOLBAR + (innerHeight - TOOLBAR) / 2, 1.25))
-  $('#btnZoomOut').addEventListener('click', () => zoomAt(innerWidth / 2, TOOLBAR + (innerHeight - TOOLBAR) / 2, 0.8))
+  $('#btnZoomIn').addEventListener('click', () => zoomAt(viewW() / 2, TOOLBAR + (innerHeight - TOOLBAR) / 2, 1.25))
+  $('#btnZoomOut').addEventListener('click', () => zoomAt(viewW() / 2, TOOLBAR + (innerHeight - TOOLBAR) / 2, 0.8))
   $('#btnHelp').addEventListener('click', startTour)
   $('#tourNext').addEventListener('click', nextTour)
   $('#tourBack').addEventListener('click', prevTour)
@@ -1658,7 +1658,7 @@ function wireGlobalInput() {
     const wy = (e.clientY - r.top - t.oy) / t.k
     animateView({
       s: V.s,
-      ox: innerWidth / 2 - wx * V.s,
+      ox: viewW() / 2 - wx * V.s,
       oy: TOOLBAR + (innerHeight - TOOLBAR) / 2 - wy * V.s
     })
   })
@@ -1997,7 +1997,7 @@ const bmList = $('#bmlist')
 function positionBmPanel() {
   const r = $('#btnBookmarks').getBoundingClientRect()
   const w = bmPanel.offsetWidth
-  bmPanel.style.left = clamp(r.left, 8, innerWidth - w - 8) + 'px'
+  bmPanel.style.left = clamp(r.left, 8, viewW() - w - 8) + 'px'
   bmPanel.style.top = (r.bottom + 10) + 'px'
 }
 
@@ -2204,7 +2204,7 @@ function positionVaultPanel() {
   const p = vaultPanel()
   const r = $('#btnVault').getBoundingClientRect()
   const w = p.offsetWidth
-  p.style.left = clamp(r.right - w, 8, innerWidth - w - 8) + 'px'
+  p.style.left = clamp(r.right - w, 8, viewW() - w - 8) + 'px'
   p.style.top = (r.bottom + 10) + 'px'
 }
 
@@ -2385,7 +2385,9 @@ function positionSettingsPanel() {
   const p = settingsPanelEl()
   const r = $('#btnSettings').getBoundingClientRect()
   const w = p.offsetWidth
-  p.style.left = clamp(r.right - w, 8, innerWidth - w - 8) + 'px'
+  // The AI dock is a native view that paints over DOM — keep the panel out of
+  // its strip or most of it would be invisible and unclickable.
+  p.style.left = clamp(r.right - w, 8, viewW() - w - 8) + 'px'
   p.style.top = (r.bottom + 10) + 'px'
 }
 
@@ -2710,6 +2712,9 @@ async function runAICanvas(verb, args = {}) {
     case 'open_card': {
       const u = normalizeInput(String(args.url || ''))
       if (!u) throw new Error('no valid url')
+      // A fullscreen page covers the whole canvas — anything opened behind it
+      // would be invisible while the tool reports success.
+      if (fullId) exitFullscreen()
       const parent = args.parent_id && cards.get(args.parent_id)
       const c = parent ? spawnChild(parent, u) : newCard(u)
       if (c && !parent) flashCard(c)
@@ -2730,6 +2735,7 @@ async function runAICanvas(verb, args = {}) {
     case 'focus_card': {
       const c = cards.get(args.card_id)
       if (!c) throw new Error('no such card')
+      if (fullId && fullId !== c.id) exitFullscreen()
       jumpToCard(c)
       return { ok: true }
     }
@@ -2740,10 +2746,27 @@ async function runAICanvas(verb, args = {}) {
       if (!c) throw new Error('no such card')
       c.lastActive = Date.now()
       c.aiPinnedUntil = Date.now() + 120000
-      if (!c.viewCreated) await goLive(c)
-      else { c.live = true; scheduleLayout() }
+      // Cap concurrent pins at 3: an unbounded set would suspend the
+      // KEEP_ALIVE prune budget entirely ("summarize all 30 cards" would hold
+      // 30 background Chromium processes alive at once).
+      const pinned = [...cards.values()]
+        .filter(x => x !== c && x.aiPinnedUntil > Date.now())
+        .sort((a, b) => b.aiPinnedUntil - a.aiPinnedUntil)
+      for (const x of pinned.slice(2)) x.aiPinnedUntil = 0
+      setTimeout(scheduleLayout, 121000) // prune sweep once the pin lapses
+      if (!c.viewCreated) {
+        // A recreated view reloads from scratch — a stale everLoaded from its
+        // previous life would end the wait loop before the page arrives.
+        c.everLoaded = false
+        await goLive(c)
+        if (!c.viewCreated) throw new Error('could not create the page view')
+      }
+      // No c.live here: reads work on a detached webContents, and forcing
+      // liveness on an off-screen card just churns attach/detach each frame.
       const t0 = Date.now()
       while (Date.now() - t0 < 12000) {
+        if (c.error) throw new Error('the page failed to load: ' + c.error)
+        if (!c.viewCreated) throw new Error('the page view went away while loading')
         if (c.everLoaded && c.viewReady) break
         await sleep(200)
       }
@@ -2780,8 +2803,8 @@ drift.onUIKey(({ key }) => {
     case 'tidy': tidy(); break
     case 'closecard': if (activeId) closeCard(activeId); break
     case 'fit': fitAll(); break
-    case 'zoomin': zoomAt(innerWidth / 2, innerHeight / 2, 1.25); break
-    case 'zoomout': zoomAt(innerWidth / 2, innerHeight / 2, 0.8); break
+    case 'zoomin': zoomAt(viewW() / 2, innerHeight / 2, 1.25); break
+    case 'zoomout': zoomAt(viewW() / 2, innerHeight / 2, 0.8); break
     case 'reloadcard': if (activeId) drift.navAction(activeId, 'reload'); break
     case 'address': {
       const c = activeId && cards.get(activeId)
