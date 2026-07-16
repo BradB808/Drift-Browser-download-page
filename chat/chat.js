@@ -193,7 +193,7 @@
     bubble.appendChild(utext)
     if (cards && cards.length) {
       const tags = el('div', { class: 'utags' })
-      for (const c of cards) tags.appendChild(el('span', { class: 'utag', text: '✦ ' + (c.title || hostOf(c.url) || c.id) }))
+      for (const c of cards) tags.appendChild(el('span', { class: 'utag', text: c.title || hostOf(c.url) || c.id }))
       bubble.appendChild(tags)
     }
     transcript.appendChild(bubble)
@@ -447,7 +447,7 @@
 
   function buildEmpty() {
     empty.innerHTML = ''
-    empty.appendChild(el('div', { class: 'emark', text: '✦' }))
+    empty.appendChild(el('div', { class: 'emark', text: 'D' }))
     empty.appendChild(el('div', { class: 'etitle', text: 'Chat with your canvas' }))
     empty.appendChild(el('div', { class: 'esub', text: 'I can see your cards and open, read, or act on them. Ask away.' }))
     const examples = [

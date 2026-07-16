@@ -123,7 +123,11 @@ html, body {
   text-shadow: 0 1px 10px rgba(0, 0, 0, 0.4);
 }
 .brand .bmark {
-  font-size: 15px;
+  /* Drift's own mark — a heavy D in the two-tone gradient (a four-point star
+     reads as someone else's logo). */
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
   background: linear-gradient(135deg, var(--accent), var(--accent2));
   -webkit-background-clip: text;
   background-clip: text;
@@ -798,11 +802,13 @@ html, body {
   padding: 44px 20px 24px;
 }
 #empty .emark {
-  font-size: 40px;
+  font-size: 44px;
+  font-weight: 800;
   background: linear-gradient(135deg, var(--accent), var(--accent2));
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
+  filter: drop-shadow(0 0 12px rgba(255, 255, 255, 0.45));
 }
 #empty .etitle { font-size: 18px; font-weight: 650; color: var(--text); margin-top: 4px; }
 #empty .esub { font-size: 13px; color: var(--dim); line-height: 1.5; max-width: 280px; }
