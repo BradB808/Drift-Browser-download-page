@@ -240,6 +240,22 @@
     align-items: center;
   }
   @media (min-width: 900px) { .card.split { grid-template-columns: 1.15fr 1fr; } }
+  /* AI section: text + tiles on the left, the connection panel on the right */
+  .aisplit .minis { grid-template-columns: 1fr; margin-top: 22px; }
+  @media (min-width: 640px) { .aisplit .minis { grid-template-columns: 1fr 1fr; } }
+  @media (min-width: 900px) { .aisplit { grid-template-columns: 1.25fr 0.75fr; align-items: start; } .aisplit .minis { grid-template-columns: 1fr; } }
+  .connshot { align-self: center; }
+  .connframe {
+    border: 1.5px solid var(--ink);
+    border-radius: 22px;
+    overflow: hidden;
+    background: #0d0b10;
+    box-shadow: 0 24px 60px rgba(27, 27, 31, 0.16);
+    max-width: 340px;
+    margin: 0 auto;
+  }
+  .connframe img { width: 100%; display: block; }
+  .conncap { margin: 14px auto 0; max-width: 340px; font-size: 13px; color: var(--gray); text-align: center; line-height: 1.5; }
   .card h2 {
     font-family: "Fraunces", Georgia, serif;
     font-weight: 700;
@@ -252,7 +268,8 @@
   .minis { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; }
   .mini { background: var(--faint); border-radius: 16px; padding: 20px; }
   .mini .ico { font-size: 22px; }
-  .mini h4 { font-size: 15px; margin-top: 8px; }
+  .mini h4 { font-size: 15px; }
+  .mini h4:not(:first-child) { margin-top: 8px; }
   .mini p { font-size: 13.5px; color: var(--gray); line-height: 1.6; margin-top: 5px; }
   .mini a { color: var(--ink); font-weight: 500; text-decoration: underline; text-underline-offset: 2px; }
   .mini a:hover { color: var(--orange); }
@@ -459,7 +476,7 @@
 
 <section class="block" id="assistant">
   <div class="wrap">
-    <div class="card split">
+    <div class="card split aisplit">
       <div>
         <h2 class="serif">Let <span class="aimark" aria-label="AI"><i>A</i><i>I</i></span><br>drift the web for you</h2>
         <p class="lead">Ask the built-in assistant and it browses beside you — opening cards,
@@ -467,11 +484,15 @@
         <p class="body">Bring your own models: an API key, your ChatGPT plan, OpenRouter, or
           something running quietly on your Mac. Keys stay in your keychain, it asks before
           acting on a site, and your questions go to your provider — nowhere else.</p>
+        <div class="minis">
+          <div class="mini"><h4>It browses with you</h4><p>“Compare these three pages” becomes cards and trails on your canvas, not a wall of text.</p></div>
+          <div class="mini"><h4>Your models</h4><p>Your keys, your ChatGPT plan, OpenRouter, or local models — your choice, your account.</p></div>
+          <div class="mini"><h4>Asks first</h4><p>Acting on a site needs your yes — and Esc always stops it.</p></div>
+        </div>
       </div>
-      <div class="minis">
-        <div class="mini"><div class="ico">🧭</div><h4>It browses with you</h4><p>“Compare these three pages” becomes cards and trails on your canvas, not a wall of text.</p></div>
-        <div class="mini"><div class="ico">🔑</div><h4>Your models</h4><p>Your keys, your ChatGPT plan, OpenRouter, or local models — your choice, your account.</p></div>
-        <div class="mini"><div class="ico">🤝</div><h4>Asks first</h4><p>Acting on a site needs your yes — and Esc always stops it.</p></div>
+      <div class="connshot">
+        <div class="connframe"><img src="assets/ai-connections.jpg" alt="Drift's assistant connection screen — bring your own models: OpenRouter, OpenAI, Claude, ChatGPT and Google Gemini, plus local models and any OpenAI-compatible endpoint" loading="lazy"></div>
+        <p class="conncap">Connect an API key, your ChatGPT plan, OpenRouter, or a local model — your account, your choice.</p>
       </div>
     </div>
   </div>
