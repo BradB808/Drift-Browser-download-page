@@ -657,6 +657,30 @@ function checkForUpdates() {
 
 ipcMain.handle('update:open', () => shell.openExternal(DOWNLOAD_PAGE))
 
+// Promo shots only: strip consent/cookie overlays from the staged pages so
+// captures show content, not banners. Registered exclusively in --promoshot
+// runs against the throwaway profile — never in a normal session.
+if (PROMO) {
+  ipcMain.handle('promo:clean', async () => {
+    const script = `(() => {
+      try {
+        const rx = /onetrust|cookie|consent|gdpr|truste|didomi|sp_message/i
+        for (const el of Array.from(document.querySelectorAll('div,section,aside,dialog,iframe'))) {
+          const key = (el.id || '') + ' ' + (typeof el.className === 'string' ? el.className : '') + ' ' + (el.getAttribute('data-uia') || '')
+          if (rx.test(key)) el.remove()
+        }
+        document.documentElement.style.overflow = ''
+        if (document.body) document.body.style.overflow = ''
+      } catch {}
+      return true
+    })()`
+    for (const [, m] of views) {
+      try { await m.view.webContents.executeJavaScript(script, true) } catch {}
+    }
+    return { ok: true }
+  })
+}
+
 // ---------- Selftest plumbing ----------
 
 const selftestDir = process.env.DRIFT_SELFTEST_DIR || path.join(app.getPath('temp'), 'drift-selftest')

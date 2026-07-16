@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('drift', {
   vaultSave: (blob) => ipcRenderer.invoke('vault:save', blob),
   vaultFill: (id, username, password) => ipcRenderer.invoke('vault:fill', { id, username, password }),
   selftestArtifact: (name, dataUrl) => ipcRenderer.invoke('selftest:artifact', { name, dataUrl }),
+  promoClean: () => ipcRenderer.invoke('promo:clean'),
   selftestDone: (report) => ipcRenderer.invoke('selftest:done', report),
   openDownloadPage: () => ipcRenderer.invoke('update:open'),
   settingsLoad: () => ipcRenderer.invoke('settings:load'),

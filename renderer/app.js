@@ -3450,6 +3450,13 @@ async function runPromoshot() {
     await sleep(300)
   }
   await sleep(scene.settle || 2000)
+  // Cookie/consent overlays photograph terribly — a promo-only main handler
+  // strips them from every staged page before the thumbnails are taken.
+  try { await drift.promoClean() } catch {}
+  await sleep(400)
+  // The rolling snapshotter may have thumbnailed pages BEFORE the cleanup —
+  // drop those so every card gets a fresh, banner-free capture.
+  for (const x of all) x.snapshot = null
   // Every card needs a thumbnail before the zoom-out — capturePage drops
   // frames while the window is occluded or a page is mid-paint, so retry
   // until each one lands.
