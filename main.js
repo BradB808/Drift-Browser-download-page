@@ -275,6 +275,11 @@ ipcMain.handle('view:snapshot', async (_e, { id, width }) => {
 // State payloads carry thumbnail images and can reach several MB; a sync
 // write here stalls the main process and shows up as scroll jank. Write
 // async, coalescing to the latest payload if saves arrive faster than disk.
+// Write to a temp file then rename: writeFile truncates on open, so an
+// interrupted direct write (crash, kill, power loss, quit race) would leave
+// drift-state.json half-written — state:load then returns null and the
+// renderer falls back to firstRun(), silently wiping the user's whole canvas.
+// rename is atomic, so the live file is always either fully old or fully new.
 let savingState = false
 let pendingState = null
 ipcMain.handle('state:save', (_e, json) => {
@@ -286,14 +291,28 @@ ipcMain.handle('state:save', (_e, json) => {
     while (pendingState) {
       const data = pendingState
       pendingState = null
-      try { await fs.promises.writeFile(stateFile(), JSON.stringify(data)) } catch {}
+      const f = stateFile()
+      const tmp = f + '.' + process.pid + '.tmp'
+      try {
+        await fs.promises.writeFile(tmp, JSON.stringify(data))
+        await fs.promises.rename(tmp, f)
+      } catch { try { await fs.promises.unlink(tmp) } catch {} }
     }
     savingState = false
   })()
 })
 
 ipcMain.handle('state:load', () => {
-  try { return JSON.parse(fs.readFileSync(stateFile(), 'utf8')) } catch { return null }
+  try { return JSON.parse(fs.readFileSync(stateFile(), 'utf8')) } catch (err) {
+    // A parse failure means an old truncated file from before atomic writes.
+    // Preserve it (once) instead of letting the next save overwrite it with
+    // the demo canvas — a corrupt file is still a recovery artifact.
+    try {
+      const f = stateFile()
+      if (fs.existsSync(f)) fs.renameSync(f, f.replace(/\.json$/, '') + '.corrupt.json')
+    } catch {}
+    return null
+  }
 })
 
 // ---------- bookmarks ----------

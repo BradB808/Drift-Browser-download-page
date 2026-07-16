@@ -51,7 +51,11 @@ function createAiStore({ userDataDir, safeStorage, headless }) {
     writeAtomic(aiFile, JSON.stringify({ secrets, meta }, null, 2))
   }
 
-  const MAX_CHATS = 100
+  // The disk cap only exists to bound file size, but chatsForDisk already
+  // strips the heavy part (screenshots) — text-only chats are tiny, so keep a
+  // generous ceiling. A lower cap silently dropped chats the sidebar still
+  // listed (in-memory is unbounded) on the next launch.
+  const MAX_CHATS = 2000
 
   // What goes to disk: image blocks (screenshots, ~100KB+ of base64 each) are
   // session-only — persisting them would balloon the file and make every
