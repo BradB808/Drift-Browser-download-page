@@ -153,6 +153,18 @@ function createTools({ canvasRpc, pageTarget, snapshot, store }) {
     return { wc: t.wc }
   }
 
+  // Interaction needs more than a live webContents: a detached (off-screen)
+  // view silently swallows dispatched input — no hit-testing happens. Focus
+  // the card so its view attaches AND the user watches what the assistant
+  // does, then give the glide + layout a beat to land.
+  async function interactiveTarget(cardId) {
+    const t = await liveTarget(cardId)
+    if (t.error) return t
+    try { await canvasRpc('focus_card', { card_id: cardId }) } catch {}
+    await sleep(700)
+    return t
+  }
+
   // Distinct failure texts: a real "No" click, a prompt nobody answered, and a
   // closed chat panel are different situations — the model should not tell the
   // user they declined something they never saw.
@@ -228,9 +240,13 @@ function createTools({ canvasRpc, pageTarget, snapshot, store }) {
     if (!wc.debugger.isAttached()) wc.debugger.attach('1.3')
   }
 
-  async function cdpClick(wc, x, y) {
+  // CDP input coordinates are layout-viewport CSS px — exactly what the locate
+  // script reports, at any zoom factor (verified empirically at 0.3–1.1 zoom).
+  // What DOES matter: the view must be attached to the window, or dispatched
+  // events never hit-test — callers focus the card first.
+  async function cdpClick(wc, loc) {
     attach(wc)
-    const at = { x, y, button: 'left', clickCount: 1 }
+    const at = { x: loc.x, y: loc.y, button: 'left', clickCount: 1 }
     await wc.debugger.sendCommand('Input.dispatchMouseEvent', Object.assign({ type: 'mousePressed', buttons: 1 }, at))
     await wc.debugger.sendCommand('Input.dispatchMouseEvent', Object.assign({ type: 'mouseReleased', buttons: 0 }, at))
   }
@@ -345,7 +361,7 @@ function createTools({ canvasRpc, pageTarget, snapshot, store }) {
     const cardId = input.card_id
     const ref = input.ref
     if (!cardId || !ref) return err('click needs a card_id and a ref (from read_page)')
-    const t = await liveTarget(cardId)
+    const t = await interactiveTarget(cardId)
     if (t.error) return err(t.error)
     const wc = t.wc
     const gate = await ensureAllowed(wc, 'click', ctx)
@@ -356,7 +372,7 @@ function createTools({ canvasRpc, pageTarget, snapshot, store }) {
     const bad = guard(loc, ref)
     if (bad) return bad
     try {
-      await cdpClick(wc, loc.x, loc.y)
+      await cdpClick(wc, loc)
       return 'clicked ' + ref + ' on ' + originOf(wc)
     } catch (e) {
       const synth = await wc.executeJavaScript(synthClickScript(ref), true).catch(() => null)
@@ -371,7 +387,7 @@ function createTools({ canvasRpc, pageTarget, snapshot, store }) {
     const text = typeof input.text === 'string' ? input.text : ''
     const submit = !!input.submit
     if (!cardId || !ref) return err('type_text needs a card_id and a ref (from read_page)')
-    const t = await liveTarget(cardId)
+    const t = await interactiveTarget(cardId)
     if (t.error) return err(t.error)
     const wc = t.wc
     const gate = await ensureAllowed(wc, 'type', ctx)
@@ -384,7 +400,7 @@ function createTools({ canvasRpc, pageTarget, snapshot, store }) {
     try {
       // A real click focuses the field, then insertText fills it. Enter (never
       // Escape) submits when asked.
-      await cdpClick(wc, loc.x, loc.y)
+      await cdpClick(wc, loc)
       if (text) await wc.debugger.sendCommand('Input.insertText', { text })
       if (submit) {
         const enter = { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 }

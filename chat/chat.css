@@ -1,19 +1,21 @@
-/* Drift AI chat dock — warm liquid glass, dark plum, peach/coral accents.
-   Tokens mirror renderer/style.css :root; this is a separate document (default
-   session) so they're redeclared locally rather than imported. */
+/* Drift AI chat dock — monochrome liquid glass: near-black surfaces, white
+   accents, a white header glow. The two-tone gradient idea survives as
+   white→silver. Red appears ONLY as danger/error semantics. Tokens are
+   local: this is a separate document (default session), not an import of
+   renderer/style.css. */
 
 :root {
-  --panel-bg: rgba(15, 12, 19, 0.96);
-  --raise: rgba(24, 19, 30, 0.98);
+  --panel-bg: rgba(10, 10, 12, 0.97);
+  --raise: rgba(22, 22, 25, 0.98);
   --line: rgba(255, 255, 255, 0.11);
   --line-soft: rgba(255, 255, 255, 0.07);
-  --text: #f4f1ec;
-  --dim: #a79fb3;
-  --dim2: #7d7488;
-  --accent: #ffb469;
-  --accent2: #ff6f91;
-  --accent-dim: rgba(255, 164, 105, 0.5);
-  --accent-soft: rgba(255, 164, 105, 0.14);
+  --text: #f4f4f5;
+  --dim: #a8a8ae;
+  --dim2: #77777e;
+  --accent: #f2f2f3;          /* white — the bright half of the mix */
+  --accent2: #97979d;         /* silver — the soft half */
+  --accent-dim: rgba(255, 255, 255, 0.4);
+  --accent-soft: rgba(255, 255, 255, 0.09);
   --danger: #ff6b6b;
   --danger-soft: rgba(255, 107, 107, 0.16);
   --field: rgba(255, 255, 255, 0.05);
@@ -52,13 +54,13 @@ html, body {
   box-shadow: 0 26px 80px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.06);
   overflow: hidden;
 }
-/* Faint top-left specular sheen, warm. */
+/* Faint top-left specular sheen, cool white. */
 #panel::before {
   content: "";
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  background: radial-gradient(130% 60% at 10% -12%, rgba(255, 180, 105, 0.13), transparent 56%);
+  background: radial-gradient(130% 60% at 10% -12%, rgba(255, 255, 255, 0.13), transparent 56%);
   pointer-events: none;
 }
 
@@ -75,6 +77,41 @@ html, body {
   padding: 0 8px 0 14px;
   border-bottom: 1px solid var(--line-soft);
 }
+/* Breathing white aura across the top of the dock. Sits behind the
+   header's own content (negative z inside #head's stacking context) and
+   never takes clicks. */
+#head::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  left: -30px;
+  right: -30px;
+  top: -34px;
+  height: 92px;
+  pointer-events: none;
+  background:
+    radial-gradient(55% 100% at 22% 0%, rgba(255, 255, 255, 0.34), transparent 70%),
+    radial-gradient(60% 110% at 78% 0%, rgba(190, 190, 198, 0.42), transparent 72%);
+  filter: blur(14px);
+  animation: headglow 4.5s ease-in-out infinite alternate;
+}
+/* Glowing hairline where the header meets the transcript. */
+#head::after {
+  content: "";
+  position: absolute;
+  left: 6%;
+  right: 6%;
+  bottom: -1px;
+  height: 1px;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, var(--accent), var(--accent2), transparent);
+  opacity: 0.55;
+  animation: headglow 4.5s ease-in-out infinite alternate;
+}
+@keyframes headglow {
+  from { opacity: 0.55; }
+  to { opacity: 1; }
+}
 .brand {
   display: flex;
   align-items: center;
@@ -83,6 +120,7 @@ html, body {
   font-size: 13.5px;
   letter-spacing: 0.02em;
   color: var(--text);
+  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.4);
 }
 .brand .bmark {
   font-size: 15px;
@@ -90,6 +128,12 @@ html, body {
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
+  filter: drop-shadow(0 0 7px rgba(255, 255, 255, 0.65));
+  animation: markpulse 4.5s ease-in-out infinite alternate;
+}
+@keyframes markpulse {
+  from { filter: drop-shadow(0 0 4px rgba(255, 255, 255, 0.45)); }
+  to { filter: drop-shadow(0 0 9px rgba(255, 255, 255, 0.85)); }
 }
 .hspacer { flex: 1; }
 
@@ -134,7 +178,7 @@ html, body {
   align-self: flex-end;
   max-width: 88%;
   background: var(--accent-soft);
-  border: 1px solid rgba(255, 164, 105, 0.22);
+  border: 1px solid rgba(255, 255, 255, 0.22);
   border-radius: 16px 16px 6px 16px;
   padding: 9px 13px;
 }
@@ -143,7 +187,7 @@ html, body {
 .msg.user .utag {
   font-size: 11px;
   color: var(--accent);
-  background: rgba(255, 164, 105, 0.12);
+  background: rgba(255, 255, 255, 0.12);
   border: 1px solid var(--accent-dim);
   border-radius: 999px;
   padding: 1px 8px;
@@ -217,7 +261,7 @@ html, body {
   color: var(--dim);
 }
 .tool .tstat { flex: none; width: 14px; text-align: center; }
-.tool.ok { border-color: rgba(255, 164, 105, 0.28); }
+.tool.ok { border-color: rgba(255, 255, 255, 0.28); }
 .tool.ok .tstat { color: var(--accent); }
 .tool.err { border-color: rgba(255, 107, 107, 0.35); }
 .tool.err .tstat { color: var(--danger); }
@@ -225,7 +269,7 @@ html, body {
   display: inline-block;
   width: 12px;
   height: 12px;
-  border: 2px solid rgba(255, 180, 105, 0.25);
+  border: 2px solid rgba(255, 255, 255, 0.25);
   border-top-color: var(--accent);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
@@ -238,7 +282,7 @@ html, body {
   align-self: stretch;
   border: 1px solid var(--accent-dim);
   border-radius: 12px;
-  background: rgba(255, 164, 105, 0.06);
+  background: rgba(255, 255, 255, 0.06);
   padding: 11px 12px;
 }
 .perm .permq { font-size: 13px; line-height: 1.45; }
@@ -260,7 +304,7 @@ html, body {
 .perm .permbtns .pyes {
   border: 0;
   background: linear-gradient(90deg, var(--accent), var(--accent2));
-  color: #23130d;
+  color: #131316;
   font-weight: 650;
 }
 .perm .permbtns .pyes:hover { filter: brightness(1.08); }
@@ -382,7 +426,7 @@ html, body {
   max-width: 100%;
   font-size: 11.5px;
   color: var(--accent);
-  background: rgba(255, 164, 105, 0.1);
+  background: rgba(255, 255, 255, 0.1);
   border: 1px solid var(--accent-dim);
   border-radius: 999px;
   padding: 2px 4px 2px 9px;
@@ -401,7 +445,7 @@ html, body {
   cursor: pointer;
   opacity: 0.7;
 }
-.chip .cx:hover { opacity: 1; background: rgba(255, 164, 105, 0.2); }
+.chip .cx:hover { opacity: 1; background: rgba(255, 255, 255, 0.2); }
 
 #inputWrap { display: flex; }
 #input {
@@ -453,7 +497,7 @@ html, body {
   border: 0;
   border-radius: 50%;
   background: linear-gradient(135deg, var(--accent), var(--accent2));
-  color: #23130d;
+  color: #131316;
   font-size: 15px;
   line-height: 1;
   cursor: pointer;
@@ -461,7 +505,7 @@ html, body {
 }
 .send:hover { filter: brightness(1.08); }
 .send:active { transform: scale(0.95); }
-.send.stop { background: linear-gradient(135deg, #ff9a6b, var(--danger)); color: #2a0d0d; font-size: 13px; }
+.send.stop { background: linear-gradient(135deg, #3c3c41, #1e1e22); color: #f2f2f3; font-size: 13px; }
 
 /* ---------- floating menus (history / model / mention) ---------- */
 
@@ -583,7 +627,7 @@ html, body {
   width: 22px;
   height: 22px;
   border-radius: 6px;
-  background: linear-gradient(135deg, #2a2135, #171221);
+  background: linear-gradient(135deg, #29292d, #141416);
   border: 1px solid var(--line);
   display: flex;
   align-items: center;
@@ -608,7 +652,7 @@ html, body {
   padding: 14px 14px 20px;
   /* Opaque: it layers over the transcript/empty state, and even a 4% bleed
      ghosts bright content through the provider rows. */
-  background: rgb(17, 13, 21);
+  background: rgb(12, 12, 14);
 }
 #conn::-webkit-scrollbar { width: 6px; }
 #conn::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.14); border-radius: 3px; }
@@ -650,7 +694,7 @@ html, body {
 }
 .pdot.on {
   background: var(--accent);
-  box-shadow: 0 0 8px rgba(255, 180, 105, 0.6);
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.6);
 }
 .pname { flex: 1; font-size: 13.5px; font-weight: 600; color: var(--text); }
 .pstate { flex: none; font-size: 11.5px; color: var(--accent); }
@@ -719,7 +763,7 @@ html, body {
 .pbtn.primary {
   border: 0;
   background: linear-gradient(90deg, var(--accent), var(--accent2));
-  color: #23130d;
+  color: #131316;
   font-weight: 650;
 }
 .pbtn.primary:hover { filter: brightness(1.08); }
@@ -781,7 +825,7 @@ html, body {
   border: 0;
   border-radius: 999px;
   background: linear-gradient(90deg, var(--accent), var(--accent2));
-  color: #23130d;
+  color: #131316;
   font-weight: 650;
   font-size: 13px;
   cursor: pointer;

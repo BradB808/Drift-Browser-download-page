@@ -141,6 +141,9 @@ function createProviders(deps) {
 
   function descriptors() {
     const has = (name) => !!store.getSecret(name)
+    // A custom endpoint may be keyless (llama.cpp, LiteLLM) — a saved base URL
+    // is what makes it usable, with or without a key.
+    const customBase = !!(((store.getMeta() || {}).custom || {}).baseUrl)
     const list = [
       { id: 'anthropic', label: 'Anthropic', kind: 'key', connected: has('anthropic') },
       { id: 'openai', label: 'OpenAI', kind: 'key', connected: has('openai') },
@@ -149,7 +152,7 @@ function createProviders(deps) {
       { id: 'gemini', label: 'Google Gemini', kind: 'key', connected: has('gemini') },
       { id: 'ollama', label: 'Ollama', kind: 'local', connected: !!(localState.ollama && localState.ollama.up) },
       { id: 'lmstudio', label: 'LM Studio', kind: 'local', connected: !!(localState.lmstudio && localState.lmstudio.up) },
-      { id: 'custom', label: 'Custom', kind: 'custom', connected: has('custom') }
+      { id: 'custom', label: 'Custom', kind: 'custom', connected: has('custom') || customBase }
     ]
     if (process.env.DRIFT_AI_MOCK === '1') list.push({ id: 'mock', label: 'Mock', kind: 'key', connected: true })
     return list
@@ -197,9 +200,9 @@ function createProviders(deps) {
       if (id === 'mock') return [{ id: 'mock-1', label: 'Mock model' }]
       const cfg = resolveCompat(id)
       if (!cfg) return fb.map(toModel)
-      // Skip a doomed request when a key is required and missing (OpenRouter's
-      // list is public, so it's exempt).
-      if ((id === 'openai' || id === 'gemini' || id === 'custom') && !cfg.key) return fb.map(toModel)
+      // Skip a doomed request when a key is required and missing. OpenRouter's
+      // list is public and custom endpoints may be keyless — both still fetch.
+      if ((id === 'openai' || id === 'gemini') && !cfg.key) return fb.map(toModel)
       return await compatModels(cfg, signal, fb)
     } catch {
       return fb.map(toModel)

@@ -3285,7 +3285,14 @@ async function runSelftest() {
     enterFullscreen(fsCard)
     if (!minimapOccluded()) report.errors.push('minimap not marked occluded during fullscreen')
     exitFullscreen()
-    if (minimapOccluded()) report.errors.push('minimap still occluded after leaving fullscreen')
+    if (minimapOccluded()) {
+      report.errors.push('minimap still occluded after leaving fullscreen')
+      report.mmDebug = {
+        V: { ...V },
+        mm: minimapRect(),
+        live: [...cards.values()].filter(c => c.live && c.viewReady).map(c => ({ id: c.id, r: screenBodyRect(c) }))
+      }
+    }
 
     startTour()
     if (!tourOpen) report.errors.push('walkthrough did not open')
