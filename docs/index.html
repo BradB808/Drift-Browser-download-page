@@ -10,12 +10,12 @@
 <meta property="og:site_name" content="Drift Browser">
 <meta property="og:title" content="Drift Browser — the spatial web browser">
 <meta property="og:description" content="No tabs. Pages are cards on an infinite canvas, connected by trails. Free and open source for macOS.">
-<meta property="og:image" content="https://driftwebbrowser.com/assets/promo.png">
+<meta property="og:image" content="https://driftwebbrowser.com/assets/promo.jpg">
 <meta property="og:url" content="https://driftwebbrowser.com/">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Drift Browser — the spatial web browser">
 <meta name="twitter:description" content="No tabs. Pages are cards on an infinite canvas, connected by trails. Free and open source for macOS.">
-<meta name="twitter:image" content="https://driftwebbrowser.com/assets/promo.png">
+<meta name="twitter:image" content="https://driftwebbrowser.com/assets/promo.jpg">
 <link rel="canonical" href="https://driftwebbrowser.com/">
 <link rel="icon" href="assets/icon.png">
 <link rel="apple-touch-icon" href="assets/icon.png">
@@ -31,12 +31,12 @@
       "description": "Drift is a free, open-source spatial web browser for macOS. Instead of tabs, pages live as connected cards on an infinite zoomable canvas, linked by visible trails and organized into zones.",
       "applicationCategory": "BrowserApplication",
       "operatingSystem": "macOS",
-      "softwareVersion": "0.3.2",
+      "softwareVersion": "0.4.0",
       "license": "https://www.gnu.org/licenses/gpl-3.0.html",
       "isAccessibleForFree": true,
       "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
       "downloadUrl": "https://driftwebbrowser.com/#download",
-      "screenshot": "https://driftwebbrowser.com/assets/promo.png",
+      "screenshot": "https://driftwebbrowser.com/assets/promo.jpg",
       "image": "https://driftwebbrowser.com/assets/icon.png",
       "author": { "@type": "Person", "name": "Brad Brunton", "url": "https://github.com/BradB808" }
     },
@@ -70,6 +70,13 @@
     overflow-x: hidden;
   }
   .serif { font-family: "Fraunces", Georgia, serif; }
+  /* The AI monogram: two serif letters fused into one mark — the I's stem
+     melts into the A's right leg, with the site accent burning through. */
+  .aimark { display: inline-block; white-space: nowrap;
+    background: linear-gradient(115deg, var(--ink) 34%, var(--orange) 74%, var(--orange2));
+    -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .aimark i { font-style: normal; }
+  .aimark i + i { margin-left: -0.33em; }
   .wrap { max-width: 1240px; margin: 0 auto; padding: 0 clamp(20px, 4vw, 56px); }
 
   /* ---------- nav ---------- */
@@ -398,9 +405,10 @@
 
 <div class="shot">
   <div class="wrap">
-    <div class="frame"><img src="assets/promo.png" alt="Drift showing a biology research trail: Cell, DNA, Mitochondria, CRISPR, Evolution and Photosynthesis pages connected as cards on an infinite canvas"></div>
+    <div class="frame"><img src="assets/promo.jpg" alt="Drift showing a biology research trail — Cell, DNA, Mitochondria, CRISPR, Evolution and Photosynthesis pages connected as cards on an infinite canvas — with the built-in assistant open, explaining how the pages relate"></div>
   </div>
 </div>
+
 
 <section class="block" id="features">
   <div class="wrap">
@@ -444,6 +452,26 @@
         <h2 class="serif" style="font-size:clamp(28px,3.4vw,40px)">The web you know,<br>rethought from the canvas up.</h2>
         <p class="body">Every card is a real, sandboxed browser page — the same engine you
           already trust — arranged the way your head actually works.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="block" id="assistant">
+  <div class="wrap">
+    <div class="card split">
+      <div>
+        <h2 class="serif">Let <span class="aimark" aria-label="AI"><i>A</i><i>I</i></span><br>drift the web for you</h2>
+        <p class="lead">Ask the built-in assistant and it browses beside you — opening cards,
+          reading pages, drawing the trails between them.</p>
+        <p class="body">Bring your own models: an API key, your ChatGPT plan, OpenRouter, or
+          something running quietly on your Mac. Keys stay in your keychain, it asks before
+          acting on a site, and your questions go to your provider — nowhere else.</p>
+      </div>
+      <div class="minis">
+        <div class="mini"><div class="ico">🧭</div><h4>It browses with you</h4><p>“Compare these three pages” becomes cards and trails on your canvas, not a wall of text.</p></div>
+        <div class="mini"><div class="ico">🔑</div><h4>Your models</h4><p>Your keys, your ChatGPT plan, OpenRouter, or local models — your choice, your account.</p></div>
+        <div class="mini"><div class="ico">🤝</div><h4>Asks first</h4><p>Acting on a site needs your yes — and Esc always stops it.</p></div>
       </div>
     </div>
   </div>

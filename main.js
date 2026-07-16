@@ -3,7 +3,7 @@
 // per canvas card. The renderer is the canvas UI; it tells us where each live
 // page should sit on screen and at what zoom, and we position the native views.
 
-const { app, BrowserWindow, WebContentsView, ipcMain, Menu, shell, dialog, session } = require('electron')
+const { app, BrowserWindow, WebContentsView, ipcMain, Menu, shell, dialog, session, safeStorage } = require('electron')
 const path = require('path')
 const fs = require('fs')
 
@@ -18,6 +18,16 @@ try { widevine = require('electron').components } catch {}
 const SELFTEST = process.argv.includes('--selftest')
 const PROMO = process.argv.includes('--promoshot') // staged canvas for marketing shots
 
+// Last-resort net: an aborted streaming request (stop button / dock close) can
+// reject deep in Chromium's stream plumbing where no local catch reaches. Log
+// and move on rather than letting it surface as a scary unhandled-rejection
+// warning (or crash the process under a stricter Node policy).
+process.on('unhandledRejection', (reason) => {
+  const msg = String((reason && reason.message) || reason || '')
+  if (/abort/i.test(msg)) return // expected on stream cancellation
+  console.log('[drift] unhandled rejection: ' + msg)
+})
+
 // Keep selftest/promo runs out of the real profile so the user's canvas is
 // never touched.
 if (SELFTEST || PROMO) {
@@ -30,6 +40,7 @@ app.userAgentFallback = app.userAgentFallback
   .replace(/\sElectron\/[\d.]+/, '')
 
 let win = null
+let ai = null // AI assistant hub (ai/index.js), wired in whenReady
 const views = new Map() // id -> { view, attached, zoom }
 
 const stateFile = () => path.join(app.getPath('userData'), 'drift-state.json')
@@ -169,11 +180,12 @@ ipcMain.on('view:layout', (e, { zoom, items }) => {
   if (!fromCanvas(e) || !Array.isArray(items)) return
   const z = clampZoom(Number(zoom) || 1)
   const seen = new Set()
+  let attachedAny = false
   for (const it of items) {
     const m = views.get(it.id)
     if (!m) continue
     seen.add(it.id)
-    if (!m.attached) { win.contentView.addChildView(m.view); m.attached = true; topViewId = it.id }
+    if (!m.attached) { win.contentView.addChildView(m.view); m.attached = true; topViewId = it.id; attachedAny = true }
     // setBounds forces a compositor re-commit even for identical values, which
     // costs frames while a video plays — only call it when something moved.
     const b = {
@@ -205,6 +217,8 @@ ipcMain.on('view:layout', (e, { zoom, items }) => {
       if (focused) win.webContents.focus()
     }
   }
+  // Freshly attached page views land above the AI dock — bump it back on top.
+  if (attachedAny && ai) ai.ensureOnTop()
 })
 
 // Which view sits on top of the native stack; raising it again would be a
@@ -219,6 +233,7 @@ ipcMain.on('view:raise', (e, id) => {
   if (m.attached && win && !win.isDestroyed() && topViewId !== id) {
     win.contentView.addChildView(m.view)
     topViewId = id
+    if (ai) ai.ensureOnTop() // the AI dock stays above raised pages
   }
   // Tell the extension system this is the active tab, so its action icons update.
   selectExtTab(m.view.webContents)
@@ -260,6 +275,11 @@ ipcMain.handle('view:snapshot', async (_e, { id, width }) => {
 // State payloads carry thumbnail images and can reach several MB; a sync
 // write here stalls the main process and shows up as scroll jank. Write
 // async, coalescing to the latest payload if saves arrive faster than disk.
+// Write to a temp file then rename: writeFile truncates on open, so an
+// interrupted direct write (crash, kill, power loss, quit race) would leave
+// drift-state.json half-written — state:load then returns null and the
+// renderer falls back to firstRun(), silently wiping the user's whole canvas.
+// rename is atomic, so the live file is always either fully old or fully new.
 let savingState = false
 let pendingState = null
 ipcMain.handle('state:save', (_e, json) => {
@@ -271,14 +291,28 @@ ipcMain.handle('state:save', (_e, json) => {
     while (pendingState) {
       const data = pendingState
       pendingState = null
-      try { await fs.promises.writeFile(stateFile(), JSON.stringify(data)) } catch {}
+      const f = stateFile()
+      const tmp = f + '.' + process.pid + '.tmp'
+      try {
+        await fs.promises.writeFile(tmp, JSON.stringify(data))
+        await fs.promises.rename(tmp, f)
+      } catch { try { await fs.promises.unlink(tmp) } catch {} }
     }
     savingState = false
   })()
 })
 
 ipcMain.handle('state:load', () => {
-  try { return JSON.parse(fs.readFileSync(stateFile(), 'utf8')) } catch { return null }
+  try { return JSON.parse(fs.readFileSync(stateFile(), 'utf8')) } catch (err) {
+    // A parse failure means an old truncated file from before atomic writes.
+    // Preserve it (once) instead of letting the next save overwrite it with
+    // the demo canvas — a corrupt file is still a recovery artifact.
+    try {
+      const f = stateFile()
+      if (fs.existsSync(f)) fs.renameSync(f, f.replace(/\.json$/, '') + '.corrupt.json')
+    } catch {}
+    return null
+  }
 })
 
 // ---------- bookmarks ----------
@@ -652,6 +686,30 @@ function checkForUpdates() {
 
 ipcMain.handle('update:open', () => shell.openExternal(DOWNLOAD_PAGE))
 
+// Promo shots only: strip consent/cookie overlays from the staged pages so
+// captures show content, not banners. Registered exclusively in --promoshot
+// runs against the throwaway profile — never in a normal session.
+if (PROMO) {
+  ipcMain.handle('promo:clean', async () => {
+    const script = `(() => {
+      try {
+        const rx = /onetrust|cookie|consent|gdpr|truste|didomi|sp_message/i
+        for (const el of Array.from(document.querySelectorAll('div,section,aside,dialog,iframe'))) {
+          const key = (el.id || '') + ' ' + (typeof el.className === 'string' ? el.className : '') + ' ' + (el.getAttribute('data-uia') || '')
+          if (rx.test(key)) el.remove()
+        }
+        document.documentElement.style.overflow = ''
+        if (document.body) document.body.style.overflow = ''
+      } catch {}
+      return true
+    })()`
+    for (const [, m] of views) {
+      try { await m.view.webContents.executeJavaScript(script, true) } catch {}
+    }
+    return { ok: true }
+  })
+}
+
 // ---------- Selftest plumbing ----------
 
 const selftestDir = process.env.DRIFT_SELFTEST_DIR || path.join(app.getPath('temp'), 'drift-selftest')
@@ -741,7 +799,11 @@ function createWindow() {
       sandbox: false
     }
   })
-  win.loadFile('renderer/index.html', { query: SELFTEST ? { selftest: '1' } : PROMO ? { promo: '1' } : {} })
+  win.loadFile('renderer/index.html', {
+    query: SELFTEST ? { selftest: '1' }
+      : PROMO ? { promo: '1', scene: process.env.DRIFT_PROMO_SCENE || 'biology' }
+      : {}
+  })
   win.on('closed', () => { win = null })
 }
 
@@ -774,6 +836,19 @@ app.whenReady().then(async () => {
   }
   buildMenu()
   createWindow()
+  // AI assistant hub. Runs in selftest too (with the offline mock provider),
+  // so the agent spine gets exercised by the standard gate.
+  if (SELFTEST) process.env.DRIFT_AI_MOCK = '1'
+  try {
+    const { setupAI } = require('./ai')
+    ai = setupAI({
+      app, ipcMain, safeStorage, shell, WebContentsView,
+      getWindow: () => win,
+      views, sendUI, fromCanvas,
+      headless: SELFTEST || PROMO,
+      selftest: SELFTEST
+    })
+  } catch (err) { console.log('[drift] ai setup: ' + err.message) }
   // Set up the extension system + Chrome Web Store (skipped in headless runs).
   if (!SELFTEST && !PROMO) { setupExtensions().catch(err => console.log('[drift] ext setup: ' + err.message)) }
   checkForUpdates()

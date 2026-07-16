@@ -57,6 +57,7 @@ let layoutQueued = false
 let animToken = 0
 let animHardUntil = 0                // wheel input ignored until then, so trackpad momentum can't kill a deliberate glide
 let viewFreeze = false               // during zoom animations, pages show snapshots
+let aiDockW = 0                      // width reserved on the right for the AI chat dock (native view), 0 when closed
 
 // ---------- dom ----------
 
@@ -87,7 +88,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms))
 const uid = p => (p || 'c') + (++seq) + '_' + Math.random().toString(36).slice(2, 7)
 
 function hostOf(url) {
-  try { return new URL(url).hostname.replace(/^www\./, '') } catch { return url }
+  try { return new URL(url).hostname.replace(/^www\./, '') } catch { return String(url == null ? '' : url) }
 }
 
 function normalizeInput(q) {
@@ -100,6 +101,10 @@ function normalizeInput(q) {
 }
 
 const toWorld = (x, y) => ({ x: (x - V.ox) / V.s, y: (y - V.oy) / V.s })
+
+// Usable canvas width: the AI dock (a native view on the right) covers its
+// strip, so camera framing centers content in what's left of the window.
+const viewW = () => innerWidth - aiDockW
 
 function screenRect(c) {
   return { x: c.x * V.s + V.ox, y: c.y * V.s + V.oy, w: c.w * V.s, h: c.h * V.s }
@@ -155,13 +160,25 @@ function hueToHex(h) {
 
 // ---------- cards ----------
 
+// Coerce a persisted/injected number to a finite value — a corrupt state file
+// (partial write, disk fault, hand-edit) with a NaN/null coordinate must never
+// poison contentBBox → fitAll → the whole V transform (canvas goes invisible).
+function num(v, fallback) {
+  const n = typeof v === 'number' ? v : parseFloat(v)
+  return Number.isFinite(n) ? n : fallback
+}
+
 function createCard(d, opts = {}) {
+  // Coerce persisted strings too — a corrupt state file with a numeric url or
+  // title would otherwise crash string ops like palette search (.toLowerCase).
+  const url = typeof d.url === 'string' ? d.url : (d.url == null ? '' : String(d.url))
   const c = {
-    id: d.id || uid('c'),
-    url: d.url,
-    title: d.title || hostOf(d.url),
-    fav: d.fav || null,
-    x: d.x, y: d.y, w: d.w || 860, h: d.h || 600,
+    id: (typeof d.id === 'string' && d.id) ? d.id : (d.id != null ? String(d.id) : uid('c')),
+    url,
+    title: (typeof d.title === 'string' && d.title) || hostOf(url),
+    fav: typeof d.fav === 'string' ? d.fav : null,
+    x: num(d.x, 0), y: num(d.y, 0),
+    w: Math.max(340, num(d.w, 860)), h: Math.max(240, num(d.h, 600)),
     snapshot: d.snapshot || null,
     createdAt: d.createdAt || Date.now(),
     lastActive: d.lastActive || Date.now(),
@@ -843,7 +860,7 @@ function renderCtxMenu(items, x, y) {
   }
   ctxEl.classList.remove('hidden')
   const r = ctxEl.getBoundingClientRect()
-  ctxEl.style.left = clamp(x, 8, innerWidth - r.width - 8) + 'px'
+  ctxEl.style.left = clamp(x, 8, viewW() - r.width - 8) + 'px'
   ctxEl.style.top = clamp(y, TOOLBAR, innerHeight - r.height - 8) + 'px'
   scheduleLayout() // detach live views so the menu is actually on top
 }
@@ -966,7 +983,8 @@ function doLayout() {
     // Fullscreen: one page owns the entire area under the toolbar, at 100%.
     const c = cards.get(fullId)
     if (c.live && c.viewReady) {
-      items.push({ id: c.id, x: 0, y: TOOLBAR, w: innerWidth, h: innerHeight - TOOLBAR })
+      // Leave the dock's strip uncovered so chat and the fullscreen page coexist.
+      items.push({ id: c.id, x: 0, y: TOOLBAR, w: viewW(), h: innerHeight - TOOLBAR })
     }
   } else {
     for (const c of cards.values()) {
@@ -1051,7 +1069,9 @@ function pruneViews() {
   alive
     // Never evict a side panel's view: it hosts a live extension surface (and any
     // chrome.debugger/CDP session driving its page dies with the webContents).
-    .filter(c => !c.live && !c.retiring && !c.isPanel)
+    // Nor a card the assistant just pinned to read/act on — its webContents (and
+    // any CDP session driving it) must outlive the tool call.
+    .filter(c => !c.live && !c.retiring && !c.isPanel && !(c.aiPinnedUntil > Date.now()))
     .sort((a, b) => a.lastActive - b.lastActive)
     .slice(0, alive.length - KEEP_ALIVE)
     .forEach(c => {
@@ -1226,15 +1246,15 @@ function ensureVisible(c) {
   const r = screenRect(c)
   const m = 40
   let dx = 0, dy = 0
-  if (r.x + r.w > innerWidth - m) dx = innerWidth - m - (r.x + r.w)
+  if (r.x + r.w > viewW() - m) dx = viewW() - m - (r.x + r.w)
   if (r.x < m) dx = m - r.x
   if (r.y + r.h > innerHeight - m) dy = innerHeight - m - (r.y + r.h)
   if (r.y < TOOLBAR + m) dy = TOOLBAR + m - r.y
-  if (r.w > innerWidth - 2 * m || r.h > innerHeight - TOOLBAR - 2 * m) {
+  if (r.w > viewW() - 2 * m || r.h > innerHeight - TOOLBAR - 2 * m) {
     // Card bigger than the window: just center it.
     animateView({
       s: V.s,
-      ox: innerWidth / 2 - (c.x + c.w / 2) * V.s,
+      ox: viewW() / 2 - (c.x + c.w / 2) * V.s,
       oy: TOOLBAR + (innerHeight - TOOLBAR) / 2 - (c.y + c.h / 2) * V.s
     })
   } else if (dx || dy) {
@@ -1321,12 +1341,16 @@ function contentBBox() { // cards + zones
 function fitAll() {
   const b = contentBBox()
   if (!b) return
+  // Belt: a single non-finite coordinate would turn s/ox/oy into NaN and blank
+  // the whole canvas. createCard coerces geometry, so this should never fire —
+  // but if it does, don't propagate NaN into V.
+  if (![b.x, b.y, b.w, b.h].every(Number.isFinite)) return
   const pad = 90
-  const s = clamp(Math.min(innerWidth / (b.w + pad * 2), (innerHeight - TOOLBAR) / (b.h + pad * 2)), MIN_S, 1)
+  const s = clamp(Math.min(viewW() / (b.w + pad * 2), (innerHeight - TOOLBAR) / (b.h + pad * 2)), MIN_S, 1)
   animHardUntil = performance.now() + 340
   animateView({
     s,
-    ox: innerWidth / 2 - (b.x + b.w / 2) * s,
+    ox: viewW() / 2 - (b.x + b.w / 2) * s,
     oy: TOOLBAR + (innerHeight - TOOLBAR) / 2 - (b.y + b.h / 2) * s
   })
 }
@@ -1335,12 +1359,12 @@ function focusCard(c) {
   if (!focusState) focusState = { prev: { ...V } }
   setActive(c.id)
   c.lastActive = Date.now()
-  const s = clamp(Math.min((innerWidth - 90) / c.w, (innerHeight - TOOLBAR - 60) / c.h), 0.2, 2.2)
+  const s = clamp(Math.min((viewW() - 90) / c.w, (innerHeight - TOOLBAR - 60) / c.h), 0.2, 2.2)
   const go = () => {
     animHardUntil = performance.now() + 340
     animateView({
       s,
-      ox: innerWidth / 2 - (c.x + c.w / 2) * s,
+      ox: viewW() / 2 - (c.x + c.w / 2) * s,
       oy: TOOLBAR + (innerHeight - TOOLBAR) / 2 - (c.y + c.h / 2) * s
     })
   }
@@ -1374,11 +1398,11 @@ function focusPair(a, b) {
   const x1 = a.x, y1 = Math.min(a.y, ty)
   const x2 = tx + b.w, y2 = Math.max(a.y + a.h, ty + b.h)
   const pad = 70
-  const s = clamp(Math.min((innerWidth - pad * 2) / (x2 - x1), (innerHeight - TOOLBAR - pad * 2) / (y2 - y1)), 0.2, 2.2)
+  const s = clamp(Math.min((viewW() - pad * 2) / (x2 - x1), (innerHeight - TOOLBAR - pad * 2) / (y2 - y1)), 0.2, 2.2)
   animHardUntil = performance.now() + 340
   animateView({
     s,
-    ox: innerWidth / 2 - ((x1 + x2) / 2) * s,
+    ox: viewW() / 2 - ((x1 + x2) / 2) * s,
     oy: TOOLBAR + (innerHeight - TOOLBAR) / 2 - ((y1 + y2) / 2) * s
   })
   toast('Split focus — esc to leave')
@@ -1622,6 +1646,7 @@ function wireGlobalInput() {
   $('#btnBmExport').addEventListener('click', exportBookmarks)
   $('#btnBmClear').addEventListener('click', clearAllBookmarks)
   $('#btnSettings').addEventListener('click', () => { settingsOpen ? closeSettingsPanel() : openSettingsPanel() })
+  $('#btnAI').addEventListener('click', () => drift.aiToggle())
   $('#btnExt').addEventListener('click', () => drift.extOpenStore())
   if (VAULT_ENABLED) {
     $('#btnVault').classList.remove('hidden')
@@ -1634,8 +1659,8 @@ function wireGlobalInput() {
     const c = fullId && cards.get(fullId)
     if (c) openPalette({ navigateId: c.id, prefill: c.url })
   })
-  $('#btnZoomIn').addEventListener('click', () => zoomAt(innerWidth / 2, TOOLBAR + (innerHeight - TOOLBAR) / 2, 1.25))
-  $('#btnZoomOut').addEventListener('click', () => zoomAt(innerWidth / 2, TOOLBAR + (innerHeight - TOOLBAR) / 2, 0.8))
+  $('#btnZoomIn').addEventListener('click', () => zoomAt(viewW() / 2, TOOLBAR + (innerHeight - TOOLBAR) / 2, 1.25))
+  $('#btnZoomOut').addEventListener('click', () => zoomAt(viewW() / 2, TOOLBAR + (innerHeight - TOOLBAR) / 2, 0.8))
   $('#btnHelp').addEventListener('click', startTour)
   $('#tourNext').addEventListener('click', nextTour)
   $('#tourBack').addEventListener('click', prevTour)
@@ -1649,7 +1674,7 @@ function wireGlobalInput() {
     const wy = (e.clientY - r.top - t.oy) / t.k
     animateView({
       s: V.s,
-      ox: innerWidth / 2 - wx * V.s,
+      ox: viewW() / 2 - wx * V.s,
       oy: TOOLBAR + (innerHeight - TOOLBAR) / 2 - wy * V.s
     })
   })
@@ -1988,7 +2013,7 @@ const bmList = $('#bmlist')
 function positionBmPanel() {
   const r = $('#btnBookmarks').getBoundingClientRect()
   const w = bmPanel.offsetWidth
-  bmPanel.style.left = clamp(r.left, 8, innerWidth - w - 8) + 'px'
+  bmPanel.style.left = clamp(r.left, 8, viewW() - w - 8) + 'px'
   bmPanel.style.top = (r.bottom + 10) + 'px'
 }
 
@@ -2195,7 +2220,7 @@ function positionVaultPanel() {
   const p = vaultPanel()
   const r = $('#btnVault').getBoundingClientRect()
   const w = p.offsetWidth
-  p.style.left = clamp(r.right - w, 8, innerWidth - w - 8) + 'px'
+  p.style.left = clamp(r.right - w, 8, viewW() - w - 8) + 'px'
   p.style.top = (r.bottom + 10) + 'px'
 }
 
@@ -2376,7 +2401,9 @@ function positionSettingsPanel() {
   const p = settingsPanelEl()
   const r = $('#btnSettings').getBoundingClientRect()
   const w = p.offsetWidth
-  p.style.left = clamp(r.right - w, 8, innerWidth - w - 8) + 'px'
+  // The AI dock is a native view that paints over DOM — keep the panel out of
+  // its strip or most of it would be invisible and unclickable.
+  p.style.left = clamp(r.right - w, 8, viewW() - w - 8) + 'px'
   p.style.top = (r.bottom + 10) + 'px'
 }
 
@@ -2667,6 +2694,119 @@ drift.onExtReady(() => {
 })
 drift.onSpawnUrl(({ url }) => { const c = newCard(url); if (c) flashCard(c) })
 
+// ---------- AI assistant (chat dock lives in main as a native view) ----------
+
+// The dock reserves a strip on the right; reframe the canvas so focused cards
+// and the minimap stay clear of it.
+drift.onAIDock(({ open, width }) => {
+  aiDockW = open ? (width || 400) : 0
+  minimap.style.right = (16 + aiDockW) + 'px'
+  mmRect = null // the minimap just moved — its cached occlusion rect is stale
+  $('#btnAI').classList.toggle('on', !!open)
+  scheduleLayout()
+})
+
+// Verbs the assistant runs against the canvas. Each resolves back to main via
+// drift.aiCanvasResult so a tool call can await the outcome.
+async function runAICanvas(verb, args = {}) {
+  switch (verb) {
+    case 'list_cards':
+      return [...cards.values()].map(c => {
+        const zone = [...zones.values()].find(z => {
+          const cx = c.x + c.w / 2, cy = c.y + c.h / 2
+          return cx >= z.x && cx <= z.x + z.w && cy >= z.y && cy <= z.y + z.h
+        })
+        return {
+          id: c.id, title: c.title, url: c.url,
+          zone: zone ? (zone.name || 'zone') : null,
+          edges: edges.filter(e => e.from === c.id || e.to === c.id)
+            .map(e => (e.from === c.id ? e.to : e.from)),
+          active: c.id === activeId, focused: c.id === fullId,
+          live: !!c.live, panel: !!c.isPanel
+        }
+      })
+    case 'open_card': {
+      const u = normalizeInput(String(args.url || ''))
+      if (!u) throw new Error('no valid url')
+      // A fullscreen page covers the whole canvas — anything opened behind it
+      // would be invisible while the tool reports success.
+      if (fullId) exitFullscreen()
+      const parent = args.parent_id && cards.get(args.parent_id)
+      const c = parent ? spawnChild(parent, u) : newCard(u)
+      if (c && !parent) flashCard(c)
+      return { id: c ? c.id : null }
+    }
+    case 'navigate_card': {
+      const c = cards.get(args.card_id)
+      if (!c) throw new Error('no such card')
+      if (args.action === 'url') {
+        const u = normalizeInput(String(args.url || ''))
+        if (!u) throw new Error('no valid url')
+        navigateCard(c, u)
+      } else if (['back', 'forward', 'reload'].includes(args.action)) {
+        if (c.viewCreated) drift.navAction(c.id, args.action)
+      }
+      return { ok: true }
+    }
+    case 'focus_card': {
+      const c = cards.get(args.card_id)
+      if (!c) throw new Error('no such card')
+      if (fullId && fullId !== c.id) exitFullscreen()
+      jumpToCard(c)
+      return { ok: true }
+    }
+    case 'ensure_live': {
+      // Bring a card's page to life (creating its view if needed) and pin it so
+      // pruneViews can't destroy it out from under an in-progress read.
+      const c = cards.get(args.id || args.card_id)
+      if (!c) throw new Error('no such card')
+      c.lastActive = Date.now()
+      c.aiPinnedUntil = Date.now() + 120000
+      // Cap concurrent pins at 3: an unbounded set would suspend the
+      // KEEP_ALIVE prune budget entirely ("summarize all 30 cards" would hold
+      // 30 background Chromium processes alive at once).
+      const pinned = [...cards.values()]
+        .filter(x => x !== c && x.aiPinnedUntil > Date.now())
+        .sort((a, b) => b.aiPinnedUntil - a.aiPinnedUntil)
+      for (const x of pinned.slice(2)) x.aiPinnedUntil = 0
+      setTimeout(scheduleLayout, 121000) // prune sweep once the pin lapses
+      if (!c.viewCreated) {
+        // A recreated view reloads from scratch — a stale everLoaded from its
+        // previous life would end the wait loop before the page arrives.
+        c.everLoaded = false
+        await goLive(c)
+        if (!c.viewCreated) throw new Error('could not create the page view')
+      }
+      // No c.live here: reads work on a detached webContents, and forcing
+      // liveness on an off-screen card just churns attach/detach each frame.
+      const t0 = Date.now()
+      while (Date.now() - t0 < 12000) {
+        if (c.error) throw new Error('the page failed to load: ' + c.error)
+        if (!c.viewCreated) throw new Error('the page view went away while loading')
+        if (c.everLoaded && c.viewReady) break
+        await sleep(200)
+      }
+      return { ok: true, loaded: !!c.everLoaded }
+    }
+    case 'card_glow': {
+      const c = cards.get(args.card_id)
+      if (c) c.el.classList.toggle('aiglow', !!args.on)
+      return { ok: true }
+    }
+    default:
+      throw new Error('unknown canvas verb: ' + verb)
+  }
+}
+
+drift.onAICanvas(async ({ rpcId, verb, args }) => {
+  try {
+    const result = await runAICanvas(verb, args || {})
+    drift.aiCanvasResult({ rpcId, ok: true, result })
+  } catch (err) {
+    drift.aiCanvasResult({ rpcId, ok: false, error: String((err && err.message) || err) })
+  }
+})
+
 drift.onUIKey(({ key }) => {
   if (tourOpen && key !== 'escape' && key !== 'tour') return
   switch (key) {
@@ -2679,8 +2819,8 @@ drift.onUIKey(({ key }) => {
     case 'tidy': tidy(); break
     case 'closecard': if (activeId) closeCard(activeId); break
     case 'fit': fitAll(); break
-    case 'zoomin': zoomAt(innerWidth / 2, innerHeight / 2, 1.25); break
-    case 'zoomout': zoomAt(innerWidth / 2, innerHeight / 2, 0.8); break
+    case 'zoomin': zoomAt(viewW() / 2, innerHeight / 2, 1.25); break
+    case 'zoomout': zoomAt(viewW() / 2, innerHeight / 2, 0.8); break
     case 'reloadcard': if (activeId) drift.navAction(activeId, 'reload'); break
     case 'address': {
       const c = activeId && cards.get(activeId)
@@ -2916,15 +3056,18 @@ function serialize() {
 }
 
 function restore(st) {
-  seq = st.seq || 0
+  if (!st || typeof st !== 'object') { firstRun(); return }
+  seq = num(st.seq, 0)
   if (st.view && Number.isFinite(st.view.s)) {
     V.s = clamp(st.view.s, MIN_S, MAX_S)
-    V.ox = st.view.ox
-    V.oy = st.view.oy
+    // Only adopt finite offsets; a NaN here would blank the canvas and the
+    // offscreen check below can't recompute from it.
+    V.ox = num(st.view.ox, V.ox)
+    V.oy = num(st.view.oy, V.oy)
   }
-  for (const zd of st.zones || []) createZone(zd)
-  for (const d of st.cards || []) createCard(d, { restored: true })
-  for (const e of st.edges || []) addEdge(e.from, e.to, true)
+  for (const zd of (Array.isArray(st.zones) ? st.zones : [])) { try { createZone(zd) } catch {} }
+  for (const d of (Array.isArray(st.cards) ? st.cards : [])) { try { createCard(d, { restored: true }) } catch {} }
+  for (const e of (Array.isArray(st.edges) ? st.edges : [])) { if (e) addEdge(e.from, e.to, true) }
   // Recover from a corrupted/runaway view offset. The pre-0.3.1 canvas-drift bug
   // could push the saved view millions of pixels from the content; restoring that
   // verbatim would show an empty void. If nothing would be on screen, fit to content.
@@ -3161,7 +3304,14 @@ async function runSelftest() {
     enterFullscreen(fsCard)
     if (!minimapOccluded()) report.errors.push('minimap not marked occluded during fullscreen')
     exitFullscreen()
-    if (minimapOccluded()) report.errors.push('minimap still occluded after leaving fullscreen')
+    if (minimapOccluded()) {
+      report.errors.push('minimap still occluded after leaving fullscreen')
+      report.mmDebug = {
+        V: { ...V },
+        mm: minimapRect(),
+        live: [...cards.values()].filter(c => c.live && c.viewReady).map(c => ({ id: c.id, r: screenBodyRect(c) }))
+      }
+    }
 
     startTour()
     if (!tourOpen) report.errors.push('walkthrough did not open')
@@ -3171,6 +3321,17 @@ async function runSelftest() {
     await sleep(300)
 
     report.v2 = { zones: zones.size, searchHits: report.searchHits, tourSteps: TOUR_STEPS.length, folders: true, vault: true }
+
+    // ---- AI assistant: drive the whole agent spine offline (mock provider) ----
+    // Exercises providers.stream + the tool loop + the canvas RPC round-trip
+    // (the mock model calls list_cards, which runs in this renderer).
+    const ai = await drift.aiSelftest()
+    report.ai = ai
+    if (!ai || !ai.ok) report.errors.push('ai selftest failed: ' + (ai && ai.error))
+    else {
+      if (!ai.toolRan) report.errors.push('ai agent did not run a tool')
+      if (!ai.text || !ai.text.trim()) report.errors.push('ai agent produced no text')
+    }
   } catch (err) {
     report.errors.push(String(err && err.stack || err))
   }
@@ -3222,28 +3383,84 @@ function applyBackground() {
 // `npm run promoshot` stages a biology research canvas — a trail of connected
 // pages inside a zone — and captures the window for the landing page.
 
+// Staged canvases for marketing shots. Each scene is a themed web of real
+// pages; `dock` reserves the AI-dock strip so a chat capture can be composited
+// into the frame afterwards (the dock is a native view — it can't appear in a
+// canvas-DOM capture directly).
+const PROMO_SCENES = {
+  biology: {
+    zone: { x: -120, y: -400, w: 2940, h: 2090, name: 'Biology', color: '#6ee7a0' },
+    dock: 400,
+    cards: [
+      ['https://en.wikipedia.org/wiki/Cell_(biology)', 0, 340],
+      ['https://en.wikipedia.org/wiki/DNA', 950, -120],
+      ['https://en.wikipedia.org/wiki/Mitochondrion', 950, 800],
+      ['https://en.wikipedia.org/wiki/CRISPR_gene_editing', 1900, -280],
+      ['https://en.wikipedia.org/wiki/Evolution', 1900, 360],
+      ['https://en.wikipedia.org/wiki/Photosynthesis', 1900, 1000]
+    ],
+    edges: [[0, 1], [0, 2], [1, 3], [1, 4], [2, 5]],
+    active: 1
+  },
+  streaming: {
+    zone: { x: -120, y: -400, w: 2940, h: 2090, name: 'Movie night', color: '#ff6f91' },
+    // Logged-out streaming HOMEpages photograph badly (empty shells, consent
+    // walls) — these routes all paint rich content without an account.
+    settle: 15000,
+    cards: [
+      ['https://www.netflix.com/', 0, 340],
+      ['https://www.youtube.com/movies', 950, -120],
+      ['https://www.themoviedb.org/', 950, 800],
+      ['https://www.justwatch.com/ca', 1900, -280],
+      ['https://www.primevideo.com/', 1900, 360],
+      ['https://www.imdb.com/chart/top/', 1900, 1000]
+    ],
+    edges: [[0, 2], [0, 4], [1, 3], [2, 5]],
+    active: 0
+  },
+  research: {
+    zone: { x: -120, y: -400, w: 2940, h: 2090, name: 'Space research', color: '#b78cff' },
+    cards: [
+      ['https://en.wikipedia.org/wiki/James_Webb_Space_Telescope', 0, 340],
+      ['https://en.wikipedia.org/wiki/Black_hole', 950, -120],
+      ['https://en.wikipedia.org/wiki/Mars', 950, 800],
+      ['https://en.wikipedia.org/wiki/Exoplanet', 1900, -280],
+      ['https://en.wikipedia.org/wiki/SpaceX_Starship', 1900, 360],
+      ['https://en.wikipedia.org/wiki/International_Space_Station', 1900, 1000]
+    ],
+    edges: [[0, 1], [0, 3], [2, 4], [2, 5]],
+    active: 0
+  },
+  travel: {
+    zone: { x: -120, y: -400, w: 2940, h: 2090, name: 'Tokyo trip', color: '#ffd166' },
+    cards: [
+      ['https://en.wikivoyage.org/wiki/Tokyo', 0, 340],
+      ['https://en.wikipedia.org/wiki/Tokyo', 950, -120],
+      ['https://www.japan-guide.com/', 950, 800],
+      ['https://en.wikipedia.org/wiki/Mount_Fuji', 1900, -280],
+      ['https://en.wikipedia.org/wiki/Shinkansen', 1900, 360],
+      ['https://en.wikipedia.org/wiki/Kyoto', 1900, 1000]
+    ],
+    edges: [[0, 1], [0, 2], [1, 3], [1, 4], [2, 5]],
+    active: 0
+  }
+}
+
 async function runPromoshot() {
+  const scene = PROMO_SCENES[new URLSearchParams(location.search).get('scene')] || PROMO_SCENES.biology
   const W = 780, H = 560
   const mk = (url, x, y) => createCard({ url, x, y, w: W, h: H })
-  const cell = mk('https://en.wikipedia.org/wiki/Cell_(biology)', 0, 340)
-  const dna = mk('https://en.wikipedia.org/wiki/DNA', 950, -120)
-  const mito = mk('https://en.wikipedia.org/wiki/Mitochondrion', 950, 800)
-  const crispr = mk('https://en.wikipedia.org/wiki/CRISPR_gene_editing', 1900, -280)
-  const evo = mk('https://en.wikipedia.org/wiki/Evolution', 1900, 360)
-  const photo = mk('https://en.wikipedia.org/wiki/Photosynthesis', 1900, 1000)
-  addEdge(cell.id, dna.id)
-  addEdge(cell.id, mito.id)
-  addEdge(dna.id, crispr.id)
-  addEdge(dna.id, evo.id)
-  addEdge(mito.id, photo.id)
-  createZone({ x: -120, y: -400, w: 2940, h: 2090, name: 'Biology', color: '#6ee7a0' })
-  setActive(dna.id)
+  const all = scene.cards.map(([url, x, y]) => mk(url, x, y))
+  for (const [a, b] of scene.edges) addEdge(all[a].id, all[b].id)
+  createZone(scene.zone)
+  setActive(all[scene.active || 0].id)
+  // Reserve the dock strip so the framing matches how the shot composites.
+  if (scene.dock) aiDockW = scene.dock
 
   // Hold the view above the live threshold so every page loads and paints.
-  const all = [cell, dna, mito, crispr, evo, photo]
   const bbLoad = contentBBox()
   V.s = 0.45
-  V.ox = innerWidth / 2 - (bbLoad.x + bbLoad.w / 2) * V.s
+  V.ox = viewW() / 2 - (bbLoad.x + bbLoad.w / 2) * V.s
   V.oy = TOOLBAR + (innerHeight - TOOLBAR) / 2 - (bbLoad.y + bbLoad.h / 2) * V.s
   scheduleLayout()
   const t0 = Date.now()
@@ -3251,8 +3468,23 @@ async function runPromoshot() {
     if (all.every(x => x.everLoaded)) break
     await sleep(300)
   }
-  await sleep(2000)
-  for (const x of all) await takeSnapshot(x, true)
+  await sleep(scene.settle || 2000)
+  // Cookie/consent overlays photograph terribly — a promo-only main handler
+  // strips them from every staged page before the thumbnails are taken.
+  try { await drift.promoClean() } catch {}
+  await sleep(400)
+  // The rolling snapshotter may have thumbnailed pages BEFORE the cleanup —
+  // drop those so every card gets a fresh, banner-free capture.
+  for (const x of all) x.snapshot = null
+  // Every card needs a thumbnail before the zoom-out — capturePage drops
+  // frames while the window is occluded or a page is mid-paint, so retry
+  // until each one lands.
+  const s0 = Date.now()
+  while (Date.now() - s0 < 25000) {
+    for (const x of all) if (!x.snapshot) await takeSnapshot(x, true)
+    if (all.every(x => x.snapshot)) break
+    await sleep(500)
+  }
 
   // Wait for the photo backdrop so the shot has the full look.
   const b0 = Date.now()
@@ -3260,16 +3492,26 @@ async function runPromoshot() {
 
   // Frame the constellation below the live threshold so thumbnails render.
   const bb = contentBBox()
-  const s = Math.min(0.36, (innerWidth - 220) / bb.w)
+  const s = Math.min(0.36, (viewW() - 220) / bb.w)
   animateView({
     s,
-    ox: innerWidth / 2 - (bb.x + bb.w / 2) * s,
+    ox: viewW() / 2 - (bb.x + bb.w / 2) * s,
     oy: TOOLBAR + (innerHeight - TOOLBAR) / 2 - (bb.y + bb.h / 2) * s
   }, 250)
-  await sleep(1500)
+  // The glide is rAF-driven — verify it actually landed (an occluded window
+  // suspends rAF and would freeze the shot at the load zoom).
+  const g0 = Date.now()
+  while (Date.now() - g0 < 10000 && (Math.abs(V.s - s) > 0.001 || viewFreeze)) await sleep(200)
+  await sleep(1200)
   toastEl.classList.remove('show')
   await sleep(400)
-  await drift.selftestDone({ errors: [], promo: true, cards: all.map(x => ({ url: x.url, loaded: x.everLoaded })) })
+  await drift.selftestDone({
+    errors: [],
+    promo: true,
+    landed: Math.abs(V.s - s) <= 0.001,
+    snapshots: all.filter(x => !!x.snapshot).length,
+    cards: all.map(x => ({ url: x.url, loaded: x.everLoaded }))
+  })
 }
 
 // ---------- boot ----------
@@ -3350,8 +3592,16 @@ async function init() {
     // Zones count as content too — a canvas of empty zones must survive a relaunch.
     const hasContent = st && ((Array.isArray(st.cards) && st.cards.length) ||
                               (Array.isArray(st.zones) && st.zones.length))
-    if (hasContent) restore(st)
-    else firstRun()
+    // A corrupt state file must never brick boot to a blank void — fall back
+    // to a fresh canvas and keep the broken file out of the way for recovery.
+    if (hasContent) {
+      try { restore(st) } catch (e) {
+        cards.clear(); zones.clear(); edges.length = 0
+        cardsEl.innerHTML = ''; zonesEl.innerHTML = ''; edgeG.innerHTML = ''
+        firstRun()
+        toast('Your saved canvas could not be read — started a fresh one')
+      }
+    } else firstRun()
     // First time in Drift (even with an inherited canvas): run the walkthrough.
     let tourDone = false
     try { tourDone = !!localStorage.getItem('drift-tour-done') } catch {}

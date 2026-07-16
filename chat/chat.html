@@ -1,0 +1,47 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <title>Assistant</title>
+  <link rel="stylesheet" href="chat.css">
+</head>
+<body>
+  <div id="panel">
+    <header id="head">
+      <div class="brand"><span class="bmark">DRIFT</span></div>
+      <div class="hspacer"></div>
+      <button id="btnHistory" class="hbtn" title="Chat history" aria-label="Chat history">☰</button>
+      <button id="btnNew" class="hbtn" title="New chat" aria-label="New chat">＋</button>
+      <button id="btnConn" class="hbtn" title="Connections" aria-label="Connections">⚙</button>
+      <button id="btnClose" class="hbtn" title="Close" aria-label="Close">×</button>
+    </header>
+
+    <div id="content">
+      <div id="stream">
+        <div id="empty" class="hidden"></div>
+        <div id="transcript"></div>
+      </div>
+    </div>
+
+    <div id="composer">
+      <div id="chips" class="hidden"></div>
+      <div id="mentionMenu" class="menu hidden"></div>
+      <div id="modelMenu" class="menu hidden"></div>
+      <div id="inputWrap">
+        <textarea id="input" rows="1" placeholder="Ask about your canvas…  (@ to attach a card)" spellcheck="false"></textarea>
+      </div>
+      <div id="composerBar">
+        <button id="modelPill" class="pill" title="Choose model">Choose model</button>
+        <div class="cbspacer"></div>
+        <button id="sendBtn" class="send" title="Send" aria-label="Send">➤</button>
+      </div>
+    </div>
+
+    <div id="conn" class="hidden"></div>
+    <div id="historyMenu" class="menu hidden"></div>
+  </div>
+  <script src="chat.js"></script>
+</body>
+</html>
