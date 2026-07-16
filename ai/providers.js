@@ -130,7 +130,49 @@ async function httpError(provider, res) {
     } catch { msg = body }
   } catch {}
   msg = String(msg || '').trim().slice(0, 300)
-  return new Error(provider + ' request failed (' + res.status + (msg ? ': ' + msg : '') + ')')
+  // 429/503 after retries almost always means the (often free) model is
+  // rate-limiting — say so plainly and point at the way out.
+  let text
+  if (res.status === 429 || res.status === 503) {
+    text = provider + ' is rate-limiting this model' + (msg ? ' (' + msg + ')' : '') +
+      ' — free models throttle hard; wait a moment and retry, or pick a paid/faster model.'
+  } else {
+    text = provider + ' request failed (' + res.status + (msg ? ': ' + msg : '') + ')'
+  }
+  const e = new Error(text)
+  e.status = res.status
+  return e
+}
+
+// Rate limits (429) and transient upstream failures (5xx / Anthropic's 529
+// overloaded) are retryable. Free models in particular throttle hard, and the
+// agent loop fires a fresh call after every tool result — so a single tool
+// round can trip the limit and kill the turn. Retry the INITIAL request only
+// (before any stream bytes), with backoff that honours Retry-After.
+const RETRYABLE = new Set([429, 500, 502, 503, 504, 529])
+const sleepMs = (ms, signal) => new Promise((res) => {
+  if (signal && signal.aborted) return res()
+  const t = setTimeout(res, ms)
+  if (signal) signal.addEventListener('abort', () => { clearTimeout(t); res() }, { once: true })
+})
+
+async function fetchRetry(makeRequest, { signal, tries = 4 } = {}) {
+  let res
+  for (let attempt = 0; attempt < tries; attempt++) {
+    if (signal && signal.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e }
+    res = await makeRequest()
+    if (res.ok || !RETRYABLE.has(res.status) || attempt === tries - 1) return res
+    // Prefer the server's Retry-After (seconds or HTTP-date); else exp backoff.
+    let wait = 0
+    try {
+      const ra = res.headers.get && res.headers.get('retry-after')
+      if (ra) { const n = Number(ra); wait = Number.isFinite(n) ? n * 1000 : Math.max(0, Date.parse(ra) - Date.now()) }
+    } catch {}
+    if (!wait || wait > 20000) wait = Math.min(8000, 700 * Math.pow(2, attempt)) + Math.floor(Math.random() * 300)
+    try { await res.text() } catch {} // free the socket before waiting
+    await sleepMs(wait, signal)
+  }
+  return res
 }
 
 function createProviders(deps) {
@@ -328,12 +370,12 @@ function createProviders(deps) {
       body.tools = opts.tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.input_schema }))
     }
     // NEVER send temperature/top_p/top_k/thinking — current models 400 on them.
-    const res = await doFetch('https://api.anthropic.com/v1/messages', {
+    const res = await fetchRetry(() => doFetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'User-Agent': UA, 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify(body),
       signal: opts.signal
-    })
+    }), { signal: opts.signal })
     if (!res.ok) throw await httpError('Anthropic', res)
     return consumeAnthropic(res, opts)
   }
@@ -474,7 +516,8 @@ function createProviders(deps) {
       body: JSON.stringify(body),
       signal: opts.signal
     })
-    let res = await send()
+    // Retry 429/5xx (free models rate-limit the agent's back-to-back calls).
+    let res = await fetchRetry(send, { signal: opts.signal })
     if (res.status === 400 && opts.maxTokens) {
       const errText = await res.clone().text().catch(() => '')
       if (/max_(completion_)?tokens/.test(errText)) {
@@ -639,11 +682,11 @@ function createProviders(deps) {
 
   async function runChatGPT(opts) {
     let tok = await ensureChatGPTToken(false)
-    let res = await chatgptFetch(tok, opts)
+    let res = await fetchRetry(() => chatgptFetch(tok, opts), { signal: opts.signal })
     if (res.status === 401) {
       // Stale access token — refresh once and retry.
       tok = await ensureChatGPTToken(true)
-      res = await chatgptFetch(tok, opts)
+      res = await fetchRetry(() => chatgptFetch(tok, opts), { signal: opts.signal })
     }
     if (!res.ok) throw await httpError('ChatGPT', res)
     return consumeChatGPT(res, opts)
