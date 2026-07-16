@@ -88,7 +88,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms))
 const uid = p => (p || 'c') + (++seq) + '_' + Math.random().toString(36).slice(2, 7)
 
 function hostOf(url) {
-  try { return new URL(url).hostname.replace(/^www\./, '') } catch { return url }
+  try { return new URL(url).hostname.replace(/^www\./, '') } catch { return String(url == null ? '' : url) }
 }
 
 function normalizeInput(q) {
@@ -160,13 +160,25 @@ function hueToHex(h) {
 
 // ---------- cards ----------
 
+// Coerce a persisted/injected number to a finite value — a corrupt state file
+// (partial write, disk fault, hand-edit) with a NaN/null coordinate must never
+// poison contentBBox → fitAll → the whole V transform (canvas goes invisible).
+function num(v, fallback) {
+  const n = typeof v === 'number' ? v : parseFloat(v)
+  return Number.isFinite(n) ? n : fallback
+}
+
 function createCard(d, opts = {}) {
+  // Coerce persisted strings too — a corrupt state file with a numeric url or
+  // title would otherwise crash string ops like palette search (.toLowerCase).
+  const url = typeof d.url === 'string' ? d.url : (d.url == null ? '' : String(d.url))
   const c = {
-    id: d.id || uid('c'),
-    url: d.url,
-    title: d.title || hostOf(d.url),
-    fav: d.fav || null,
-    x: d.x, y: d.y, w: d.w || 860, h: d.h || 600,
+    id: (typeof d.id === 'string' && d.id) ? d.id : (d.id != null ? String(d.id) : uid('c')),
+    url,
+    title: (typeof d.title === 'string' && d.title) || hostOf(url),
+    fav: typeof d.fav === 'string' ? d.fav : null,
+    x: num(d.x, 0), y: num(d.y, 0),
+    w: Math.max(340, num(d.w, 860)), h: Math.max(240, num(d.h, 600)),
     snapshot: d.snapshot || null,
     createdAt: d.createdAt || Date.now(),
     lastActive: d.lastActive || Date.now(),
@@ -1329,6 +1341,10 @@ function contentBBox() { // cards + zones
 function fitAll() {
   const b = contentBBox()
   if (!b) return
+  // Belt: a single non-finite coordinate would turn s/ox/oy into NaN and blank
+  // the whole canvas. createCard coerces geometry, so this should never fire —
+  // but if it does, don't propagate NaN into V.
+  if (![b.x, b.y, b.w, b.h].every(Number.isFinite)) return
   const pad = 90
   const s = clamp(Math.min(viewW() / (b.w + pad * 2), (innerHeight - TOOLBAR) / (b.h + pad * 2)), MIN_S, 1)
   animHardUntil = performance.now() + 340
@@ -3040,15 +3056,18 @@ function serialize() {
 }
 
 function restore(st) {
-  seq = st.seq || 0
+  if (!st || typeof st !== 'object') { firstRun(); return }
+  seq = num(st.seq, 0)
   if (st.view && Number.isFinite(st.view.s)) {
     V.s = clamp(st.view.s, MIN_S, MAX_S)
-    V.ox = st.view.ox
-    V.oy = st.view.oy
+    // Only adopt finite offsets; a NaN here would blank the canvas and the
+    // offscreen check below can't recompute from it.
+    V.ox = num(st.view.ox, V.ox)
+    V.oy = num(st.view.oy, V.oy)
   }
-  for (const zd of st.zones || []) createZone(zd)
-  for (const d of st.cards || []) createCard(d, { restored: true })
-  for (const e of st.edges || []) addEdge(e.from, e.to, true)
+  for (const zd of (Array.isArray(st.zones) ? st.zones : [])) { try { createZone(zd) } catch {} }
+  for (const d of (Array.isArray(st.cards) ? st.cards : [])) { try { createCard(d, { restored: true }) } catch {} }
+  for (const e of (Array.isArray(st.edges) ? st.edges : [])) { if (e) addEdge(e.from, e.to, true) }
   // Recover from a corrupted/runaway view offset. The pre-0.3.1 canvas-drift bug
   // could push the saved view millions of pixels from the content; restoring that
   // verbatim would show an empty void. If nothing would be on screen, fit to content.
@@ -3573,8 +3592,16 @@ async function init() {
     // Zones count as content too — a canvas of empty zones must survive a relaunch.
     const hasContent = st && ((Array.isArray(st.cards) && st.cards.length) ||
                               (Array.isArray(st.zones) && st.zones.length))
-    if (hasContent) restore(st)
-    else firstRun()
+    // A corrupt state file must never brick boot to a blank void — fall back
+    // to a fresh canvas and keep the broken file out of the way for recovery.
+    if (hasContent) {
+      try { restore(st) } catch (e) {
+        cards.clear(); zones.clear(); edges.length = 0
+        cardsEl.innerHTML = ''; zonesEl.innerHTML = ''; edgeG.innerHTML = ''
+        firstRun()
+        toast('Your saved canvas could not be read — started a fresh one')
+      }
+    } else firstRun()
     // First time in Drift (even with an inherited canvas): run the walkthrough.
     let tourDone = false
     try { tourDone = !!localStorage.getItem('drift-tour-done') } catch {}

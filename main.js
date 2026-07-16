@@ -18,6 +18,16 @@ try { widevine = require('electron').components } catch {}
 const SELFTEST = process.argv.includes('--selftest')
 const PROMO = process.argv.includes('--promoshot') // staged canvas for marketing shots
 
+// Last-resort net: an aborted streaming request (stop button / dock close) can
+// reject deep in Chromium's stream plumbing where no local catch reaches. Log
+// and move on rather than letting it surface as a scary unhandled-rejection
+// warning (or crash the process under a stricter Node policy).
+process.on('unhandledRejection', (reason) => {
+  const msg = String((reason && reason.message) || reason || '')
+  if (/abort/i.test(msg)) return // expected on stream cancellation
+  console.log('[drift] unhandled rejection: ' + msg)
+})
+
 // Keep selftest/promo runs out of the real profile so the user's canvas is
 // never touched.
 if (SELFTEST || PROMO) {

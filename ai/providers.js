@@ -111,7 +111,11 @@ async function* sseEvents(res, signal) {
     if (isAbort(err, signal)) return
     throw err
   } finally {
-    try { reader.cancel() } catch {}
+    // reader.cancel() returns a promise that rejects with AbortError when the
+    // stream was already aborted (stop button / dock close mid-stream) — a
+    // sync try/catch can't catch that, so swallow the rejection explicitly or
+    // it surfaces as an unhandled rejection.
+    try { const p = reader.cancel(); if (p && p.catch) p.catch(() => {}) } catch {}
   }
 }
 
