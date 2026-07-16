@@ -533,16 +533,19 @@ body.nobg #bgimg { display: none; }
 #btnFullExit { border-color: var(--accent-dim); color: var(--accent); }
 
 /* Assistant toolbar button: peach glyph, lit pill when the dock is open. */
-#btnAI {
-  border-color: var(--accent-dim);
-  color: var(--accent);
+/* Scoped under #toolbar so these beat the `#toolbar button` base rule
+   (which otherwise out-specifies a bare #btnAI). */
+#toolbar #btnAI {
+  background: #000;
+  border-color: rgba(255, 255, 255, 0.22);
+  color: #fff;
   font-weight: 600;
 }
-#btnAI:hover { background: var(--accent-soft); border-color: var(--accent); }
-#btnAI.on {
-  background: linear-gradient(90deg, var(--accent), var(--accent2));
-  border-color: transparent;
-  color: #23130d;
+#toolbar #btnAI:hover { background: #141414; border-color: rgba(255, 255, 255, 0.42); }
+#toolbar #btnAI.on {
+  background: #000;
+  border-color: rgba(255, 255, 255, 0.6);
+  color: #fff;
 }
 
 /* A card the assistant is reading or acting on gets a soft peach ring. */
