@@ -318,6 +318,15 @@ function setupAI(deps) {
     else for (const ctrl of running.values()) ctrl.abort()
   })
 
+  // Escape on the canvas is an emergency brake — stop every running turn and
+  // release any pending permission prompt, so the assistant can't keep
+  // full-screening pages out from under the user.
+  ipcMain.on('ai:stopCanvas', e => {
+    if (!fromCanvas(e)) return
+    for (const ctrl of running.values()) ctrl.abort()
+    for (const settle of [...permPending.values()]) settle('no')
+  })
+
   // ---------- config / connections ----------
 
   const KEY_PROVIDERS = ['anthropic', 'openai', 'openrouter', 'gemini', 'custom']

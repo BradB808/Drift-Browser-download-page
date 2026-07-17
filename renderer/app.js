@@ -1711,6 +1711,11 @@ function wireGlobalInput() {
 }
 
 function onEscape() {
+  // Emergency brake: Escape always stops a running assistant turn. Without
+  // this, an assistant that keeps acting (and full-screening the card it acts
+  // on) drags the view back the instant you exit — Escape can't win a race
+  // against a live agent loop. Stopping the turn first breaks that.
+  try { drift.aiStop() } catch {}
   if (tourOpen) endTour()
   else if (paletteOpen) closePalette()
   else if (bmOpen) closeBmPanel()
@@ -2792,8 +2797,9 @@ async function runAICanvas(verb, args = {}) {
       // Interactions (click/type) need the card's native view attached at a
       // REAL viewport — a merely-live-but-off-screen card renders at 0×0, so
       // every element reads as off-screen and dispatched clicks hit nothing.
-      // Fullscreen guarantees a full-window, attached, zoom-1 view — and it's
-      // the right "watch the assistant act" UX. Escape returns the user.
+      // Focus (zoom to the card) brings it front-and-centre and live WITHOUT
+      // taking over the whole screen the way fullscreen did — the canvas stays
+      // visible around it and Escape gently returns the user.
       const c = cards.get(args.card_id || args.id)
       if (!c) throw new Error('no such card')
       c.lastActive = Date.now()
@@ -2807,15 +2813,16 @@ async function runAICanvas(verb, args = {}) {
       if (settingsOpen) closeSettingsPanel()
       if (typeof vaultOpen !== 'undefined' && vaultOpen) closeVaultPanel()
       if (ctxOpenFor) closeCtx()
+      if (fullId && fullId !== c.id) exitFullscreen() // don't leave another card blown up
       if (!c.viewCreated) { c.everLoaded = false; await goLive(c); if (!c.viewCreated) throw new Error('could not create the page view') }
-      if (fullId !== c.id) enterFullscreen(c)
+      if (fullId !== c.id) focusCard(c)
       const t0 = Date.now()
       while (Date.now() - t0 < 10000) {
         if (c.error) throw new Error('the page failed to load: ' + c.error)
-        if (c.everLoaded && c.viewReady && fullId === c.id) break
+        if (c.everLoaded && c.viewReady && c.live) break
         await sleep(120)
       }
-      await sleep(280) // let the fullscreen bounds + zoom settle before we click
+      await sleep(320) // let the focus glide + zoom settle before we click
       return { ok: true, loaded: !!c.everLoaded }
     }
     case 'card_glow': {

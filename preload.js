@@ -43,6 +43,7 @@ contextBridge.exposeInMainWorld('drift', {
   onExtRemoveTab: (fn) => ipcRenderer.on('ext:removeTab', (_e, d) => fn(d)),
   onSpawnUrl: (fn) => ipcRenderer.on('view:spawnUrl', (_e, d) => fn(d)),
   aiToggle: () => ipcRenderer.send('ai:toggle'),
+  aiStop: () => ipcRenderer.send('ai:stopCanvas'),
   aiSelftest: () => ipcRenderer.invoke('ai:selftest'),
   aiCanvasResult: (payload) => ipcRenderer.send('ai:canvasResult', payload),
   onAICanvas: (fn) => ipcRenderer.on('ai:canvas', (_e, d) => fn(d)),
