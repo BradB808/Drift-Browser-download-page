@@ -799,6 +799,12 @@ function createWindow() {
       sandbox: false
     }
   })
+  // The canvas renderer is the layout engine for every native page view — its
+  // rAF loop positions/attaches them. Occlusion throttling would stall that
+  // while the window is hidden, so an assistant action (present_card) could
+  // "succeed" against a view stuck at 0×0. The canvas idles when nothing is
+  // scheduled, so keeping it unthrottled costs nothing.
+  win.webContents.setBackgroundThrottling(false)
   win.loadFile('renderer/index.html', {
     query: SELFTEST ? { selftest: '1' }
       : PROMO ? { promo: '1', scene: process.env.DRIFT_PROMO_SCENE || 'biology' }

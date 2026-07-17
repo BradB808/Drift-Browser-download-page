@@ -2822,6 +2822,7 @@ async function runAICanvas(verb, args = {}) {
       c.lastActive = Date.now()
       c.aiPinnedUntil = Date.now() + 120000 // exempt its webContents from pruning
       c.aiActUntil = Date.now() + 120000    // + force it live/attached so clicks land
+      setTimeout(scheduleLayout, 121000)    // sweep once the pin lapses (parity with ensure_live)
       // Any open overlay (walkthrough, palette, settings, bookmarks, context
       // menu) makes decideLiveness detach every page view — a detached view is
       // 0×0 and can't be clicked. Clear them so the card can actually go live.

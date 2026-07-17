@@ -23,6 +23,8 @@ contextBridge.exposeInMainWorld('driftAI', {
   retry: (chatId) => ipcRenderer.send('ai:retry', { chatId }),
   // A chatId targets one chat's turn; omit it to stop whatever is running.
   stop: (chatId) => ipcRenderer.send('ai:stop', { chatId }),
+  // Emergency brake: abort every turn AND give the canvas back (camera, pins).
+  brake: () => ipcRenderer.send('ai:brake'),
   permissionReply: (requestId, decision) => ipcRenderer.send('ai:permReply', { requestId, decision }),
   openUrl: (url) => ipcRenderer.invoke('ai:openUrl', { url }),
   close: () => ipcRenderer.send('ai:close'),

@@ -207,6 +207,13 @@ function createTools({ canvasRpc, pageTarget, snapshot, store }) {
     catch (e) { return { error: 'could not bring card ' + cardId + ' front-and-centre to act on it: ' + msg(e) } }
     const t = pageTarget(cardId)
     if (!t || !t.wc || t.wc.isDestroyed()) return { error: 'card ' + cardId + ' has no live page' }
+    // The renderer's live/viewReady flags don't prove the native view actually
+    // attached at a real size — a hidden/minimized window stalls layout and
+    // leaves the view 0×0, where dispatched clicks silently miss. Probe the
+    // page's own viewport and fail with something actionable instead.
+    let vw = 0
+    try { vw = await t.wc.executeJavaScript('window.innerWidth') } catch {}
+    if (!vw) return { error: 'the page has no visible viewport — the Drift window may be hidden or minimized; ask the user to bring Drift to the front, then try again' }
     return { wc: t.wc }
   }
 

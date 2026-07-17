@@ -328,6 +328,20 @@ function setupAI(deps) {
     for (const settle of [...permPending.values()]) settle('no')
   })
 
+  // Escape pressed IN THE DOCK while a turn runs. The dock holds keyboard focus
+  // right after the user sends a message — exactly when the assistant starts
+  // zooming a page front-and-centre — so its Escape must be the same emergency
+  // brake as the canvas's, not just a stream-stop that leaves the camera parked
+  // on the card. Abort everything, then hand the canvas an Escape so it clears
+  // pins, bumps the brake epoch, and glides the camera back.
+  ipcMain.on('ai:brake', e => {
+    if (!fromChat(e)) return
+    for (const ctrl of running.values()) ctrl.abort()
+    for (const settle of [...permPending.values()]) settle('no')
+    const win = getWindow()
+    if (win && !win.isDestroyed()) win.webContents.send('ui:key', { key: 'escape' })
+  })
+
   // ---------- config / connections ----------
 
   const KEY_PROVIDERS = ['anthropic', 'openai', 'openrouter', 'gemini', 'custom']

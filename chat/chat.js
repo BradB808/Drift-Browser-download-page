@@ -1052,7 +1052,11 @@
     if (mentionOpen()) { mentionMenu.classList.add('hidden'); mention = null; return }
     if (!modelMenu.classList.contains('hidden') || !historyMenu.classList.contains('hidden')) { closeMenus(); return }
     if (!conn.classList.contains('hidden')) { closeConn(); return }
-    if (streaming) { driftAI.stop(currentChatId); return }
+    // Mid-turn Escape is the emergency brake, not just a stream-stop: the dock
+    // holds keyboard focus while the assistant acts, so this press must also
+    // un-zoom the canvas and drop the assistant's pins (ai:brake forwards an
+    // Escape to the canvas after aborting every turn).
+    if (streaming) { driftAI.brake(); return }
     driftAI.close()
   })
 
