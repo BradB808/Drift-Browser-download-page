@@ -1,7 +1,7 @@
 {
   "name": "drift-browser",
   "productName": "Drift",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "A spatial web browser — no tabs, just an infinite canvas of connected pages.",
   "license": "GPL-3.0",
   "main": "main.js",
