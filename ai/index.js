@@ -320,7 +320,8 @@ function setupAI(deps) {
 
   // Escape on the canvas is an emergency brake — stop every running turn and
   // release any pending permission prompt, so the assistant can't keep
-  // full-screening pages out from under the user.
+  // zooming pages front-and-centre out from under the user. (The renderer's
+  // Escape handler also drops assistant pins so nothing stays force-live.)
   ipcMain.on('ai:stopCanvas', e => {
     if (!fromCanvas(e)) return
     for (const ctrl of running.values()) ctrl.abort()

@@ -33,6 +33,7 @@ let prevActiveId = null              // the card that was active before this one
 let focusState = null                // { prev: {s,ox,oy} }
 let splitInfo = null                 // { movedId, home: {x,y} } during split focus
 let fullId = null                    // card whose live view covers the whole window
+let aiBrakeEpoch = 0                 // bumped on Escape so an in-flight present_card bails
 let paletteOpen = false
 let paletteMode = {}
 let palHits = []                     // cards matching the palette query
@@ -1026,6 +1027,16 @@ function decideLiveness() {
     const fc = cards.get(fullId)
     if (fc) fc.wantLive = true
   }
+  if (!overlay) {
+    // A card the assistant is ACTING on (present_card) must be live+attached at a
+    // real viewport regardless of zoom — its fit-scale can land below the live
+    // threshold (a large card or a small window), and a non-live card renders at
+    // 0×0 so dispatched clicks silently miss. Force only act-pins live (NOT
+    // read-pins, which ensure_live keeps deliberately detached). Bounded to
+    // ~120s, or cleared the instant the user hits Escape.
+    const now = Date.now()
+    for (const c of cards.values()) if (c.aiActUntil > now) c.wantLive = true
+  }
   // Zooming out across the live threshold retires every live card in the same
   // frame; a fresh parting thumbnail for each would mean up to 10 capturePage
   // readbacks + encodes landing in one gesture frame. Only the most recently
@@ -1716,6 +1727,11 @@ function onEscape() {
   // on) drags the view back the instant you exit — Escape can't win a race
   // against a live agent loop. Stopping the turn first breaks that.
   try { drift.aiStop() } catch {}
+  // Fully let go: drop every assistant pin so no card stays force-live, and bump
+  // the brake epoch so a present_card caught mid-flight bails instead of
+  // re-focusing the card the user just escaped out of.
+  aiBrakeEpoch++
+  for (const c of cards.values()) { c.aiPinnedUntil = 0; c.aiActUntil = 0 }
   if (tourOpen) endTour()
   else if (paletteOpen) closePalette()
   else if (bmOpen) closeBmPanel()
@@ -2802,8 +2818,10 @@ async function runAICanvas(verb, args = {}) {
       // visible around it and Escape gently returns the user.
       const c = cards.get(args.card_id || args.id)
       if (!c) throw new Error('no such card')
+      const epoch = aiBrakeEpoch // if Escape fires while we work, bail out
       c.lastActive = Date.now()
-      c.aiPinnedUntil = Date.now() + 120000
+      c.aiPinnedUntil = Date.now() + 120000 // exempt its webContents from pruning
+      c.aiActUntil = Date.now() + 120000    // + force it live/attached so clicks land
       // Any open overlay (walkthrough, palette, settings, bookmarks, context
       // menu) makes decideLiveness detach every page view — a detached view is
       // 0×0 and can't be clicked. Clear them so the card can actually go live.
@@ -2815,14 +2833,21 @@ async function runAICanvas(verb, args = {}) {
       if (ctxOpenFor) closeCtx()
       if (fullId && fullId !== c.id) exitFullscreen() // don't leave another card blown up
       if (!c.viewCreated) { c.everLoaded = false; await goLive(c); if (!c.viewCreated) throw new Error('could not create the page view') }
+      if (aiBrakeEpoch !== epoch) throw new Error('interrupted — the user pressed Escape')
       if (fullId !== c.id) focusCard(c)
       const t0 = Date.now()
       while (Date.now() - t0 < 10000) {
+        if (aiBrakeEpoch !== epoch) throw new Error('interrupted — the user pressed Escape')
         if (c.error) throw new Error('the page failed to load: ' + c.error)
         if (c.everLoaded && c.viewReady && c.live) break
         await sleep(120)
       }
+      // The view must be live+attached at a real viewport or a dispatched click
+      // hits a 0×0 phantom and silently misses (which reads to the assistant as
+      // success, so it loops). If it never attached, fail loudly instead.
+      if (!c.live || !c.viewReady) throw new Error('could not bring the card front-and-centre to act on it — its view did not attach; try again')
       await sleep(320) // let the focus glide + zoom settle before we click
+      if (aiBrakeEpoch !== epoch) throw new Error('interrupted — the user pressed Escape')
       return { ok: true, loaded: !!c.everLoaded }
     }
     case 'card_glow': {

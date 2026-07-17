@@ -198,12 +198,13 @@ function createTools({ canvasRpc, pageTarget, snapshot, store }) {
 
   // Interaction needs more than a live webContents: a detached or off-screen
   // view renders at 0×0, so dispatched input has nothing to hit-test against
-  // and every element reads as off-screen. present_card fullscreens the card —
-  // a full-window, attached, zoom-1 view with a real viewport — which is both
-  // what makes clicks/typing land and the right "watch it act" UX.
+  // and every element reads as off-screen. present_card focuses the card —
+  // zooms it front-and-centre, attached and live at a real viewport, with the
+  // canvas still visible around it — which is both what makes clicks/typing
+  // land and the right "watch it act" UX (Escape gently returns the user).
   async function interactiveTarget(cardId) {
     try { await canvasRpc('present_card', { card_id: cardId }, 20000) }
-    catch (e) { return { error: 'could not open card ' + cardId + ' full-screen to act on it: ' + msg(e) } }
+    catch (e) { return { error: 'could not bring card ' + cardId + ' front-and-centre to act on it: ' + msg(e) } }
     const t = pageTarget(cardId)
     if (!t || !t.wc || t.wc.isDestroyed()) return { error: 'card ' + cardId + ' has no live page' }
     return { wc: t.wc }
