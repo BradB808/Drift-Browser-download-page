@@ -1029,7 +1029,10 @@
       if (e.key === 'ArrowDown') { e.preventDefault(); moveMention(1); return }
       if (e.key === 'ArrowUp') { e.preventDefault(); moveMention(-1); return }
       if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pickHighlightedMention(); return }
-      if (e.key === 'Escape') { e.preventDefault(); mentionMenu.classList.add('hidden'); mention = null; return }
+      // stopPropagation: this Escape only dismisses the @mention popup — it must
+      // NOT bubble to the document Escape ladder, which mid-turn would fire the
+      // full emergency brake (abort the turn + un-zoom the canvas).
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); mentionMenu.classList.add('hidden'); mention = null; return }
     }
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend() }
   })

@@ -1371,7 +1371,13 @@ function focusCard(c) {
   setActive(c.id)
   c.lastActive = Date.now()
   const s = clamp(Math.min((viewW() - 90) / c.w, (innerHeight - TOOLBAR - 60) / c.h), 0.2, 2.2)
+  // The glide can be deferred ~90ms while a fresh thumbnail is captured. If
+  // Escape fires in that window (present_card's zoom-in is exactly when a user
+  // hits the brake), exitFocus already started gliding the camera back — this
+  // late glide must NOT run and drag them back into the escaped card.
+  const brakeEpoch = aiBrakeEpoch
   const go = () => {
+    if (aiBrakeEpoch !== brakeEpoch) return
     animHardUntil = performance.now() + 340
     animateView({
       s,
@@ -2819,10 +2825,18 @@ async function runAICanvas(verb, args = {}) {
       const c = cards.get(args.card_id || args.id)
       if (!c) throw new Error('no such card')
       const epoch = aiBrakeEpoch // if Escape fires while we work, bail out
-      c.lastActive = Date.now()
-      c.aiPinnedUntil = Date.now() + 120000 // exempt its webContents from pruning
-      c.aiActUntil = Date.now() + 120000    // + force it live/attached so clicks land
+      const nowPin = Date.now()
+      c.lastActive = nowPin
+      c.aiPinnedUntil = nowPin + 120000 // exempt its webContents from pruning
+      c.aiActUntil = nowPin + 120000    // + force it live/attached so clicks land
       setTimeout(scheduleLayout, 121000)    // sweep once the pin lapses (parity with ensure_live)
+      // Cap concurrent act-pins the way ensure_live caps read-pins: only the card
+      // being acted on stays force-attached, and total prune-exempt cards stay
+      // <=3 — else a multi-card action run ("reply to each of these threads")
+      // force-attaches an unbounded set of Chromium views past the MAX_LIVE budget.
+      for (const x of cards.values()) if (x !== c && x.aiActUntil > nowPin) x.aiActUntil = 0
+      const otherPins = [...cards.values()].filter(x => x !== c && x.aiPinnedUntil > nowPin).sort((a, b) => b.aiPinnedUntil - a.aiPinnedUntil)
+      for (const x of otherPins.slice(2)) x.aiPinnedUntil = 0
       // Any open overlay (walkthrough, palette, settings, bookmarks, context
       // menu) makes decideLiveness detach every page view — a detached view is
       // 0×0 and can't be clicked. Clear them so the card can actually go live.
@@ -2871,9 +2885,15 @@ drift.onAICanvas(async ({ rpcId, verb, args }) => {
 })
 
 drift.onUIKey(({ key }) => {
-  if (tourOpen && key !== 'escape' && key !== 'tour') return
+  if (tourOpen && key !== 'escape' && key !== 'tour' && key !== 'brake') return
   switch (key) {
     case 'escape': onEscape(); break
+    case 'brake':
+      // Dock Escape mid-turn: the turn is already aborted in main. Take the
+      // canvas back only if the assistant is actually holding it (a card it
+      // zoomed in to act on) — otherwise leave the user's own view untouched.
+      if ([...cards.values()].some(c => c.aiActUntil > Date.now())) onEscape()
+      break
     case 'tour': tourOpen ? endTour() : startTour(); break
     case 'newcard': openPalette({}); break
     case 'search': openPalette({}); break

@@ -120,7 +120,11 @@ function locateScript(ref) {
       if (!els) return { err: 'nomap' }
       const el = els[${JSON.stringify(ref)}]
       if (!el || !el.isConnected) return { err: 'notfound' }
-      el.scrollIntoView({ block: 'center', inline: 'center' })
+      // behavior:'instant' forces a SYNCHRONOUS scroll — otherwise a page with
+      // css 'scroll-behavior: smooth' animates over later frames and the rect
+      // we read on the next line is still the pre-scroll (off-screen) position,
+      // which falsely reads as offscreen or yields stale click coordinates.
+      el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' })
       const r = el.getBoundingClientRect()
       // Click the centre of the element's VISIBLE area, not its geometric
       // centre: a sticky-header or partly-scrolled element otherwise gives a
@@ -147,6 +151,27 @@ function locateScript(ref) {
 
 function synthClickScript(ref) {
   return `(() => { try { const el = (window.__driftAIEls || {})[${JSON.stringify(ref)}]; if (!el) return { ok: false }; el.click(); return { ok: true } } catch (e) { return { ok: false } } })()`
+}
+
+// Select all of a field's existing content so the following insertText REPLACES
+// it (a plain click only drops a caret mid-text, so typing would append/
+// interleave into a pre-filled field — a search box, an edit form). Matches the
+// synthetic fallback's replace semantics.
+function selectFieldScript(ref) {
+  return `(() => {
+    try {
+      const el = (window.__driftAIEls || {})[${JSON.stringify(ref)}]
+      if (!el) return false
+      el.focus()
+      if (el.isContentEditable) {
+        const r = document.createRange(); r.selectNodeContents(el)
+        const s = getSelection(); s.removeAllRanges(); s.addRange(r)
+      } else if (typeof el.select === 'function') {
+        el.select()
+      }
+      return true
+    } catch (e) { return false }
+  })()`
 }
 
 function synthTypeScript(ref, text, submit) {
@@ -455,10 +480,14 @@ function createTools({ canvasRpc, pageTarget, snapshot, store }) {
     const bad = guard(loc, ref)
     if (bad) return bad
     try {
-      // A real click focuses the field, then insertText fills it. Enter (never
+      // A real click focuses the field; select any existing content so
+      // insertText REPLACES rather than appends; then fill. Enter (never
       // Escape) submits when asked.
       await cdpClick(wc, loc)
-      if (text) await wc.debugger.sendCommand('Input.insertText', { text })
+      if (text) {
+        await wc.executeJavaScript(selectFieldScript(ref), true).catch(() => {})
+        await wc.debugger.sendCommand('Input.insertText', { text })
+      }
       if (submit) {
         const enter = { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 }
         await wc.debugger.sendCommand('Input.dispatchKeyEvent', Object.assign({ type: 'keyDown' }, enter))

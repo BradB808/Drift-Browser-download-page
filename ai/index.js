@@ -338,8 +338,11 @@ function setupAI(deps) {
     if (!fromChat(e)) return
     for (const ctrl of running.values()) ctrl.abort()
     for (const settle of [...permPending.values()]) settle('no')
+    // Send 'brake' (not 'escape'): the renderer takes the canvas back ONLY if the
+    // assistant is actually holding it (a card it zoomed in to act on). A plain
+    // text turn's Escape must not collapse the focus/overlay the USER set up.
     const win = getWindow()
-    if (win && !win.isDestroyed()) win.webContents.send('ui:key', { key: 'escape' })
+    if (win && !win.isDestroyed()) win.webContents.send('ui:key', { key: 'brake' })
   })
 
   // ---------- config / connections ----------
