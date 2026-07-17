@@ -2788,6 +2788,36 @@ async function runAICanvas(verb, args = {}) {
       }
       return { ok: true, loaded: !!c.everLoaded }
     }
+    case 'present_card': {
+      // Interactions (click/type) need the card's native view attached at a
+      // REAL viewport — a merely-live-but-off-screen card renders at 0×0, so
+      // every element reads as off-screen and dispatched clicks hit nothing.
+      // Fullscreen guarantees a full-window, attached, zoom-1 view — and it's
+      // the right "watch the assistant act" UX. Escape returns the user.
+      const c = cards.get(args.card_id || args.id)
+      if (!c) throw new Error('no such card')
+      c.lastActive = Date.now()
+      c.aiPinnedUntil = Date.now() + 120000
+      // Any open overlay (walkthrough, palette, settings, bookmarks, context
+      // menu) makes decideLiveness detach every page view — a detached view is
+      // 0×0 and can't be clicked. Clear them so the card can actually go live.
+      if (tourOpen) endTour()
+      if (paletteOpen) closePalette()
+      if (bmOpen) closeBmPanel()
+      if (settingsOpen) closeSettingsPanel()
+      if (typeof vaultOpen !== 'undefined' && vaultOpen) closeVaultPanel()
+      if (ctxOpenFor) closeCtx()
+      if (!c.viewCreated) { c.everLoaded = false; await goLive(c); if (!c.viewCreated) throw new Error('could not create the page view') }
+      if (fullId !== c.id) enterFullscreen(c)
+      const t0 = Date.now()
+      while (Date.now() - t0 < 10000) {
+        if (c.error) throw new Error('the page failed to load: ' + c.error)
+        if (c.everLoaded && c.viewReady && fullId === c.id) break
+        await sleep(120)
+      }
+      await sleep(280) // let the fullscreen bounds + zoom settle before we click
+      return { ok: true, loaded: !!c.everLoaded }
+    }
     case 'card_glow': {
       const c = cards.get(args.card_id)
       if (c) c.el.classList.toggle('aiglow', !!args.on)
