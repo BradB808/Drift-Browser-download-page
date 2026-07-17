@@ -318,6 +318,33 @@ function setupAI(deps) {
     else for (const ctrl of running.values()) ctrl.abort()
   })
 
+  // Escape on the canvas is an emergency brake — stop every running turn and
+  // release any pending permission prompt, so the assistant can't keep
+  // zooming pages front-and-centre out from under the user. (The renderer's
+  // Escape handler also drops assistant pins so nothing stays force-live.)
+  ipcMain.on('ai:stopCanvas', e => {
+    if (!fromCanvas(e)) return
+    for (const ctrl of running.values()) ctrl.abort()
+    for (const settle of [...permPending.values()]) settle('no')
+  })
+
+  // Escape pressed IN THE DOCK while a turn runs. The dock holds keyboard focus
+  // right after the user sends a message — exactly when the assistant starts
+  // zooming a page front-and-centre — so its Escape must be the same emergency
+  // brake as the canvas's, not just a stream-stop that leaves the camera parked
+  // on the card. Abort everything, then hand the canvas an Escape so it clears
+  // pins, bumps the brake epoch, and glides the camera back.
+  ipcMain.on('ai:brake', e => {
+    if (!fromChat(e)) return
+    for (const ctrl of running.values()) ctrl.abort()
+    for (const settle of [...permPending.values()]) settle('no')
+    // Send 'brake' (not 'escape'): the renderer takes the canvas back ONLY if the
+    // assistant is actually holding it (a card it zoomed in to act on). A plain
+    // text turn's Escape must not collapse the focus/overlay the USER set up.
+    const win = getWindow()
+    if (win && !win.isDestroyed()) win.webContents.send('ui:key', { key: 'brake' })
+  })
+
   // ---------- config / connections ----------
 
   const KEY_PROVIDERS = ['anthropic', 'openai', 'openrouter', 'gemini', 'custom']

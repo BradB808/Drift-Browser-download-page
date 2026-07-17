@@ -47,25 +47,62 @@ const READ_SCRIPT = `(() => {
     }
     text = clip(text.replace(/\\n{3,}/g, '\\n\\n').trim(), cap)
 
-    // Interactive elements the assistant can target.
-    const sel = 'a[href],button,input,select,textarea,[role=button],[role=link],[role=checkbox],[role=tab],[role=menuitem],[onclick]'
-    const map = {}
-    const elements = []
-    let n = 0
+    // Interactive elements the assistant can target — includes the things web
+    // apps really use for input: contenteditable bodies (Gmail/Docs), ARIA
+    // textboxes/comboboxes/searchboxes, switches and menu items, not just
+    // native <input>/<button>.
+    const sel = 'a[href],button,input,select,textarea,summary,[contenteditable],' +
+      '[role=button],[role=link],[role=checkbox],[role=radio],[role=switch],[role=tab],' +
+      '[role=menuitem],[role=menuitemcheckbox],[role=menuitemradio],[role=option],' +
+      '[role=textbox],[role=combobox],[role=searchbox],[role=spinbutton],[onclick]'
+    const noType = ['button', 'submit', 'reset', 'checkbox', 'radio', 'file', 'image', 'range', 'color', 'hidden']
+    // Resolve the best human label: aria-label, aria-labelledby, an associated
+    // <label>, then placeholder/title/name/value, then the element's own text.
+    const labelOf = (node) => {
+      let l = (node.getAttribute && node.getAttribute('aria-label')) || ''
+      if (!l && node.getAttribute) {
+        const lb = node.getAttribute('aria-labelledby')
+        if (lb) l = lb.split(/\\s+/).map((id) => { const e = document.getElementById(id); return e ? (e.innerText || e.textContent || '') : '' }).join(' ')
+      }
+      if (!l && node.labels && node.labels.length) l = node.labels[0].innerText || node.labels[0].textContent || ''
+      if (!l && node.getAttribute) l = node.getAttribute('placeholder') || node.getAttribute('title') || node.getAttribute('name') || node.getAttribute('value') || ''
+      if (!l) l = node.innerText || node.textContent || ''
+      return String(l).replace(/\\s+/g, ' ').trim().slice(0, 140)
+    }
+    const inView = (r) => r.bottom > 0 && r.top < window.innerHeight && r.right > 0 && r.left < window.innerWidth
+
+    const cand = []
     for (const node of document.querySelectorAll(sel)) {
-      if (n >= 120) break
+      if (node.getAttribute && node.getAttribute('contenteditable') === 'false') continue
       if (!visible(node)) continue
       const tag = (node.tagName || '').toLowerCase()
       const type = ((node.getAttribute && node.getAttribute('type')) || '').toLowerCase()
       const role = (node.getAttribute && node.getAttribute('role')) || ''
-      let label = (node.getAttribute && (node.getAttribute('aria-label') || node.getAttribute('placeholder') || node.getAttribute('name') || node.getAttribute('value'))) || node.innerText || node.textContent || ''
-      label = label.replace(/\\s+/g, ' ').trim().slice(0, 120)
-      if (tag === 'input' && !label) label = type || 'input'
+      const editable = !!node.isContentEditable ||
+        ['textbox', 'combobox', 'searchbox', 'spinbutton'].indexOf(role) >= 0 ||
+        tag === 'textarea' ||
+        (tag === 'input' && noType.indexOf(type) < 0)
+      let kind = editable ? 'textbox'
+        : role ? role
+        : (tag === 'a' ? 'link' : tag === 'input' ? (type || 'input') : tag)
+      const r = node.getBoundingClientRect()
+      const vis = inView(r)
+      // Surface on-screen editable fields first so a busy app (Gmail's hundreds
+      // of nodes) can't push the compose fields past the cap.
+      const prio = editable && vis ? 0 : vis ? 1 : editable ? 2 : 3
+      cand.push({ node, prio, rec: { tag: kind, role, editable, label: labelOf(node), href: (tag === 'a' && node.href) ? node.href : undefined } })
+    }
+    cand.sort((a, b) => a.prio - b.prio) // stable: keeps DOM order within a tier
+
+    const map = {}
+    const elements = []
+    let n = 0
+    for (const c of cand) {
+      if (n >= 220) break
       const ref = 'e' + (++n)
-      const rec = { ref, tag: tag || role || 'el', role: role, label: label }
-      if (tag === 'a' && node.href) rec.href = node.href
-      elements.push(rec)
-      map[ref] = node
+      c.rec.ref = ref
+      elements.push(c.rec)
+      map[ref] = c.node
     }
     window.__driftAIEls = map
     return { title: document.title || '', url: location.href, text: text, elements: elements }
@@ -83,15 +120,25 @@ function locateScript(ref) {
       if (!els) return { err: 'nomap' }
       const el = els[${JSON.stringify(ref)}]
       if (!el || !el.isConnected) return { err: 'notfound' }
-      el.scrollIntoView({ block: 'center', inline: 'center' })
+      // behavior:'instant' forces a SYNCHRONOUS scroll — otherwise a page with
+      // css 'scroll-behavior: smooth' animates over later frames and the rect
+      // we read on the next line is still the pre-scroll (off-screen) position,
+      // which falsely reads as offscreen or yields stale click coordinates.
+      el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' })
       const r = el.getBoundingClientRect()
+      // Click the centre of the element's VISIBLE area, not its geometric
+      // centre: a sticky-header or partly-scrolled element otherwise gives a
+      // point outside the viewport and the dispatched click lands on nothing.
+      const vx1 = Math.max(0, r.left), vy1 = Math.max(0, r.top)
+      const vx2 = Math.min(window.innerWidth, r.right), vy2 = Math.min(window.innerHeight, r.bottom)
+      if (vx2 - vx1 < 1 || vy2 - vy1 < 1) return { err: 'offscreen' }
       const tag = (el.tagName || '').toLowerCase()
       const type = ((el.getAttribute && el.getAttribute('type')) || '').toLowerCase()
       const ac = ((el.getAttribute && el.getAttribute('autocomplete')) || '').toLowerCase()
       const hint = ((el.name || '') + ' ' + (el.id || '')).toLowerCase()
       return {
-        x: Math.round(r.left + r.width / 2),
-        y: Math.round(r.top + r.height / 2),
+        x: Math.round((vx1 + vx2) / 2),
+        y: Math.round((vy1 + vy2) / 2),
         w: r.width, h: r.height,
         tag: tag,
         password: type === 'password',
@@ -104,6 +151,27 @@ function locateScript(ref) {
 
 function synthClickScript(ref) {
   return `(() => { try { const el = (window.__driftAIEls || {})[${JSON.stringify(ref)}]; if (!el) return { ok: false }; el.click(); return { ok: true } } catch (e) { return { ok: false } } })()`
+}
+
+// Select all of a field's existing content so the following insertText REPLACES
+// it (a plain click only drops a caret mid-text, so typing would append/
+// interleave into a pre-filled field — a search box, an edit form). Matches the
+// synthetic fallback's replace semantics.
+function selectFieldScript(ref) {
+  return `(() => {
+    try {
+      const el = (window.__driftAIEls || {})[${JSON.stringify(ref)}]
+      if (!el) return false
+      el.focus()
+      if (el.isContentEditable) {
+        const r = document.createRange(); r.selectNodeContents(el)
+        const s = getSelection(); s.removeAllRanges(); s.addRange(r)
+      } else if (typeof el.select === 'function') {
+        el.select()
+      }
+      return true
+    } catch (e) { return false }
+  })()`
 }
 
 function synthTypeScript(ref, text, submit) {
@@ -153,16 +221,25 @@ function createTools({ canvasRpc, pageTarget, snapshot, store }) {
     return { wc: t.wc }
   }
 
-  // Interaction needs more than a live webContents: a detached (off-screen)
-  // view silently swallows dispatched input — no hit-testing happens. Focus
-  // the card so its view attaches AND the user watches what the assistant
-  // does, then give the glide + layout a beat to land.
+  // Interaction needs more than a live webContents: a detached or off-screen
+  // view renders at 0×0, so dispatched input has nothing to hit-test against
+  // and every element reads as off-screen. present_card focuses the card —
+  // zooms it front-and-centre, attached and live at a real viewport, with the
+  // canvas still visible around it — which is both what makes clicks/typing
+  // land and the right "watch it act" UX (Escape gently returns the user).
   async function interactiveTarget(cardId) {
-    const t = await liveTarget(cardId)
-    if (t.error) return t
-    try { await canvasRpc('focus_card', { card_id: cardId }) } catch {}
-    await sleep(700)
-    return t
+    try { await canvasRpc('present_card', { card_id: cardId }, 20000) }
+    catch (e) { return { error: 'could not bring card ' + cardId + ' front-and-centre to act on it: ' + msg(e) } }
+    const t = pageTarget(cardId)
+    if (!t || !t.wc || t.wc.isDestroyed()) return { error: 'card ' + cardId + ' has no live page' }
+    // The renderer's live/viewReady flags don't prove the native view actually
+    // attached at a real size — a hidden/minimized window stalls layout and
+    // leaves the view 0×0, where dispatched clicks silently miss. Probe the
+    // page's own viewport and fail with something actionable instead.
+    let vw = 0
+    try { vw = await t.wc.executeJavaScript('window.innerWidth') } catch {}
+    if (!vw) return { error: 'the page has no visible viewport — the Drift window may be hidden or minimized; ask the user to bring Drift to the front, then try again' }
+    return { wc: t.wc }
   }
 
   // Distinct failure texts: a real "No" click, a prompt nobody answered, and a
@@ -223,6 +300,7 @@ function createTools({ canvasRpc, pageTarget, snapshot, store }) {
     if (!loc || typeof loc !== 'object') return err('could not locate element ' + ref)
     if (loc.err === 'nomap') return err('no element list for this card yet — call read_page first, then use its e-refs')
     if (loc.err === 'notfound') return err('element ' + ref + ' is gone — the page changed; call read_page again')
+    if (loc.err === 'offscreen') return err('element ' + ref + ' could not be scrolled into view (it may be inside a scrollable panel or hidden) — read_page again and try a different element')
     if (loc.err) return err('could not locate ' + ref + ': ' + loc.err)
     if (loc.password) return err('refusing to touch a password field — the user must do this themselves')
     if (loc.cc) return err('refusing to touch a payment-card field — the user must do this themselves')
@@ -317,6 +395,9 @@ function createTools({ canvasRpc, pageTarget, snapshot, store }) {
     if (!cardId) return err('read_page needs a card_id')
     const t = await liveTarget(cardId)
     if (t.error) return err(t.error)
+    // A read often follows an action that opens dynamic UI (a compose window,
+    // a menu) — give it a beat to render before snapshotting the elements.
+    await sleep(350)
     let data
     try { data = await t.wc.executeJavaScript(READ_SCRIPT, true) }
     catch (e) { return err('could not read card ' + cardId + ': ' + msg(e)) }
@@ -326,12 +407,13 @@ function createTools({ canvasRpc, pageTarget, snapshot, store }) {
     if (data.title) out.push(clean(data.title))
     if (data.text) out.push(clean(data.text))
     if (Array.isArray(data.elements) && data.elements.length) {
-      out.push('\nInteractive elements:')
+      out.push('\nInteractive elements (use type_text on [textbox] ones, click on the rest):')
       for (const el of data.elements) {
         const tag = el.tag || el.role || 'el'
         const label = el.label ? ' ' + clean(el.label) : ''
         const href = el.href ? '  → ' + el.href : ''
-        out.push(el.ref + ' [' + tag + ']' + label + href)
+        const editable = el.editable ? ' — type here' : ''
+        out.push(el.ref + ' [' + tag + ']' + label + href + editable)
       }
     }
     out.push('</page_content>')
@@ -398,10 +480,14 @@ function createTools({ canvasRpc, pageTarget, snapshot, store }) {
     const bad = guard(loc, ref)
     if (bad) return bad
     try {
-      // A real click focuses the field, then insertText fills it. Enter (never
+      // A real click focuses the field; select any existing content so
+      // insertText REPLACES rather than appends; then fill. Enter (never
       // Escape) submits when asked.
       await cdpClick(wc, loc)
-      if (text) await wc.debugger.sendCommand('Input.insertText', { text })
+      if (text) {
+        await wc.executeJavaScript(selectFieldScript(ref), true).catch(() => {})
+        await wc.debugger.sendCommand('Input.insertText', { text })
+      }
       if (submit) {
         const enter = { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 }
         await wc.debugger.sendCommand('Input.dispatchKeyEvent', Object.assign({ type: 'keyDown' }, enter))
