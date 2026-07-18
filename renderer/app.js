@@ -49,6 +49,7 @@ let hitSet = new Set()               // ids highlighted on canvas/minimap
 let ctxOpenFor = null
 let tourOpen = false
 let tourIdx = 0
+let tourPhase = 'intro'              // 'intro' (cinematic welcome scene) | 'steps' (coach-marks)
 let bmOpen = false
 let settingsOpen = false
 let settings = { bg: { mode: 'photos' } } // loaded from disk at boot
@@ -81,6 +82,7 @@ const toastEl = $('#toast')
 const tourEl = $('#tour')
 const tourSpot = $('#tourSpot')
 const tourCard = $('#tourCard')
+const introEl = $('#introScene')
 
 // ---------- helpers ----------
 
@@ -1638,6 +1640,11 @@ function wireGlobalInput() {
   window.addEventListener('keydown', e => {
     if (e.target.tagName === 'INPUT') return
     if (tourOpen) {
+      if (tourPhase === 'intro') {
+        if (e.key === 'Escape') endTour()
+        else if (e.key === 'Enter' || e.key === 'ArrowRight') beginTourSteps()
+        return
+      }
       if (e.key === 'Escape') endTour()
       else if (e.key === 'Enter' || e.key === 'ArrowRight') nextTour()
       else if (e.key === 'ArrowLeft') prevTour()
@@ -1682,6 +1689,13 @@ function wireGlobalInput() {
   $('#tourNext').addEventListener('click', nextTour)
   $('#tourBack').addEventListener('click', prevTour)
   $('#tourSkip').addEventListener('click', endTour)
+  $('#introGo').addEventListener('click', beginTourSteps)
+  $('#introSkip').addEventListener('click', endTour)
+  // The intro's constellation stage is a fixed 1100×640 design that scales
+  // down to fit small windows; keep it fitted through live resizes.
+  window.addEventListener('resize', () => {
+    if (tourOpen && tourPhase === 'intro') introFitStage()
+  })
 
   minimap.addEventListener('mousedown', e => {
     const t = minimapTransform()
@@ -2989,48 +3003,141 @@ function drawMinimap() {
 }
 
 // ---------- walkthrough ----------
-// First-launch guided tour: a glass coach-mark card plus a sliding spotlight
-// over the real UI. Shown once (localStorage flag), replayable via ? or the
-// View menu.
+// First-launch experience: a cinematic full-screen intro scene (aurora, ember
+// particles, a drifting mini-constellation of glass cards, mouse parallax),
+// then a guided coach-mark tour — a glass card with an animated vignette per
+// step plus a sliding spotlight over the real UI. Shown once (localStorage
+// flag), replayable via ? or the View menu.
 
 const TOUR_STEPS = [
   {
-    title: 'Welcome to Drift',
-    body: 'There are no tabs here. Every page is a <b>card on an infinite canvas</b> — your browsing becomes a map you can see and rearrange. This tour takes about a minute.'
-  },
-  {
     title: 'Glide around',
-    body: 'Scroll with two fingers to <b>pan</b>. Pinch or <kbd>⌘</kbd>+scroll to <b>zoom</b> — pull back far enough and your pages become a constellation of thumbnails. <kbd>⌘0</kbd> fits everything on screen.'
+    body: 'Scroll with two fingers to <b>pan</b>. Pinch or <kbd>⌘</kbd>+scroll to <b>zoom</b> — pull back far enough and your pages become a constellation of thumbnails. <kbd>⌘0</kbd> fits everything on screen.',
+    viz: `<svg viewBox="0 0 390 116">
+      <rect class="vzdim" x="128" y="16" width="134" height="84" rx="10" stroke-dasharray="4 5"/>
+      <g class="vzPan">
+        <rect class="vzcard" x="58" y="28" width="84" height="56" rx="7"/>
+        <rect class="vzbar" x="66" y="36" width="40" height="5" rx="2.5"/>
+        <rect class="vzline" x="66" y="48" width="62" height="4" rx="2"/>
+        <rect class="vzline" x="66" y="57" width="48" height="4" rx="2"/>
+        <path class="vzdim" d="M 142 52 C 158 46, 162 42, 176 38"/>
+        <rect class="vzcard" x="176" y="14" width="76" height="50" rx="7"/>
+        <rect class="vzbar" x="184" y="22" width="34" height="5" rx="2.5"/>
+        <rect class="vzline" x="184" y="34" width="56" height="4" rx="2"/>
+        <rect class="vzline" x="184" y="43" width="42" height="4" rx="2"/>
+        <path class="vzdim" d="M 214 64 C 222 74, 230 78, 244 82"/>
+        <rect class="vzcard" x="244" y="66" width="72" height="44" rx="7"/>
+        <rect class="vzbar" x="252" y="74" width="32" height="5" rx="2.5"/>
+        <rect class="vzline" x="252" y="86" width="52" height="4" rx="2"/>
+      </g>
+    </svg>`
   },
   {
     title: 'This is a page card',
     body: 'Drag the <b>header</b> to move it, the corner grip to resize. <b>Double-click the header</b> to focus it — and <b>⛶</b> takes the page truly full-screen. <kbd>esc</kbd> floats you back out. Click its title to change the address.',
-    target: () => [...cards.values()][0]?.el
+    target: () => [...cards.values()][0]?.el,
+    viz: `<svg viewBox="0 0 390 116">
+      <rect class="vzcard lit" x="138" y="16" width="114" height="84" rx="9"/>
+      <rect class="vzbar vzPulse" x="146" y="24" width="98" height="11" rx="4"/>
+      <rect class="vzline" x="146" y="46" width="82" height="5" rx="2.5"/>
+      <rect class="vzline" x="146" y="58" width="64" height="5" rx="2.5"/>
+      <rect class="vzline" x="146" y="70" width="74" height="5" rx="2.5"/>
+      <circle class="vzdot vzGripDot" cx="248" cy="96" r="4.5"/>
+    </svg>`
   },
   {
     title: 'Open anything',
     body: 'Press <kbd>⌘T</kbd> or double-click any empty spot on the canvas. Type an address or just search. Hit <b>☆</b> on any card to bookmark it — your bookmarks live right here in <kbd>⌘T</kbd>.',
-    target: () => $('#btnNew')
+    target: () => $('#btnNew'),
+    viz: `<svg viewBox="0 0 390 116">
+      <rect class="vzcard" x="93" y="40" width="204" height="36" rx="18"/>
+      <circle class="vzdim" cx="114" cy="58" r="5"/>
+      <path class="vzdim" d="M 118 62 L 123 67"/>
+      <rect class="vzbar vzType" x="134" y="54" width="86" height="8" rx="4"/>
+      <rect class="vzCaret" x="226" y="49" width="2" height="18" rx="1" fill="#ffb469"/>
+    </svg>`
   },
   {
     title: 'Trails, not history',
     body: 'When a page opens a link "in a new tab", Drift spawns a <b>child card with a trail line</b> back to its parent. Draw one yourself: <b>drag the ○ on a card\'s right edge onto another card</b>. Double-click a trail to remove it, right-click a card to copy a whole trail as Markdown.',
-    target: () => [...cards.values()][1]?.el
+    target: () => [...cards.values()][1]?.el,
+    viz: `<svg viewBox="0 0 390 116">
+      <rect class="vzcard" x="52" y="34" width="66" height="48" rx="7"/>
+      <rect class="vzbar" x="60" y="42" width="30" height="5" rx="2.5"/>
+      <rect class="vzline" x="60" y="54" width="48" height="4" rx="2"/>
+      <rect class="vzline" x="60" y="63" width="38" height="4" rx="2"/>
+      <rect class="vzcard lit" x="272" y="32" width="66" height="48" rx="7"/>
+      <rect class="vzbar" x="280" y="40" width="30" height="5" rx="2.5"/>
+      <rect class="vzline" x="280" y="52" width="48" height="4" rx="2"/>
+      <rect class="vzline" x="280" y="61" width="38" height="4" rx="2"/>
+      <path class="vztrail vzDraw" d="M 118 58 C 165 30, 225 30, 272 56"/>
+      <circle class="vzdot vzTravel" r="4"/>
+      <circle class="vzdot" cx="118" cy="58" r="3.2"/>
+      <circle class="vzdot" cx="272" cy="56" r="3.2"/>
+    </svg>`
   },
   {
     title: 'Zones keep you organized',
     body: 'Zones are named regions — "Trip planning", "Job hunt". <b>Drag the label</b> and every card inside travels along. Click the dot to recolor, the name to rename. <kbd>⇧⌘N</kbd> makes a new one.',
-    target: () => [...zones.values()][0]?.el.querySelector('.zlabel') || $('#btnZone')
+    target: () => [...zones.values()][0]?.el.querySelector('.zlabel') || $('#btnZone'),
+    viz: `<svg viewBox="0 0 390 116">
+      <rect class="vzZone" x="110" y="22" width="170" height="84" rx="10"/>
+      <g class="vzZoneLabel">
+        <rect x="122" y="14" width="62" height="15" rx="7.5" fill="rgba(255,154,94,0.85)"/>
+        <rect x="132" y="20" width="42" height="3.5" rx="1.75" fill="rgba(35,19,13,0.7)"/>
+      </g>
+      <rect class="vzcard" x="128" y="44" width="58" height="42" rx="6"/>
+      <rect class="vzbar" x="135" y="51" width="26" height="4" rx="2"/>
+      <rect class="vzline" x="135" y="61" width="40" height="3.5" rx="1.75"/>
+      <rect class="vzcard" x="204" y="52" width="58" height="42" rx="6"/>
+      <rect class="vzbar" x="211" y="59" width="26" height="4" rx="2"/>
+      <rect class="vzline" x="211" y="69" width="40" height="3.5" rx="1.75"/>
+    </svg>`
   },
   {
     title: 'Find and tidy',
     body: '<kbd>⌘F</kbd> searches every card on your canvas — matches light up on the map. <b>Tidy</b> (<kbd>⇧⌘T</kbd>) auto-arranges your trails into clean trees.',
-    target: () => $('#btnTidy')
+    target: () => $('#btnTidy'),
+    viz: `<svg viewBox="0 0 390 116">
+      <g class="vzScatter">
+        <circle class="vzdot" cx="132" cy="30" r="5"/>
+        <circle class="vzdot" cx="258" cy="84" r="5"/>
+        <circle class="vzdot" cx="178" cy="90" r="5"/>
+        <circle class="vzdot" cx="288" cy="26" r="5"/>
+        <circle class="vzdot" cx="216" cy="46" r="5"/>
+        <circle class="vzdot" cx="148" cy="66" r="5"/>
+      </g>
+      <g class="vzTree">
+        <path class="vzdim" d="M 132 58 C 158 58, 172 26, 200 26"/>
+        <path class="vzdim" d="M 132 58 L 200 58"/>
+        <path class="vzdim" d="M 132 58 C 158 58, 172 90, 200 90"/>
+        <path class="vzdim" d="M 200 26 L 268 26"/>
+        <circle class="vzdot" cx="132" cy="58" r="5"/>
+        <circle class="vzdot" cx="200" cy="26" r="5"/>
+        <circle class="vzdot" cx="200" cy="58" r="5"/>
+        <circle class="vzdot" cx="200" cy="90" r="5"/>
+        <circle class="vzdot" cx="268" cy="26" r="5"/>
+      </g>
+    </svg>`
   },
   {
     title: 'It all just stays',
     body: 'Cards, trails, zones, bookmarks — everything lives <b>on your machine</b> and is right where you left it next launch. Closed something by accident? <b>Right-click → Reopen closed card</b>. Replay this tour anytime with <kbd>?</kbd>. Now go drift. ◍',
-    target: () => $('#btnHelp')
+    target: () => $('#btnHelp'),
+    viz: `<svg viewBox="0 0 390 116">
+      <path class="vzdim" d="M 195 58 L 122 34"/>
+      <path class="vzdim" d="M 195 58 L 272 30"/>
+      <path class="vzdim" d="M 195 58 L 262 88"/>
+      <circle class="istar" cx="122" cy="34" r="3"/>
+      <circle class="istar" cx="272" cy="30" r="3"/>
+      <circle class="istar" cx="262" cy="88" r="3"/>
+      <circle class="istar" cx="104" cy="82" r="2.2"/>
+      <circle class="istar" cx="300" cy="62" r="2.2"/>
+      <circle class="vzRing" cx="195" cy="58" r="26"/>
+      <circle class="vzRing r2" cx="195" cy="58" r="26"/>
+      <circle cx="195" cy="58" r="12" fill="none" stroke="#ffb469" stroke-width="2"/>
+      <circle class="vzdot" cx="195" cy="58" r="4.5"/>
+    </svg>`
   }
 ]
 
@@ -3039,14 +3146,37 @@ function startTour() {
   if (paletteOpen) closePalette()
   tourOpen = true
   tourIdx = 0
+  tourPhase = 'intro'
   tourEl.classList.remove('hidden')
-  renderTourStep()
+  tourSpot.classList.add('hidden')
+  tourCard.classList.add('hidden')
+  introEnter()
   scheduleLayout() // detach live views under the overlay
+}
+
+// Hand-off from the intro scene to the coach-mark steps: the scene fades and
+// gently scales away, revealing the spotlighted UI beneath.
+let introHideT = 0
+
+function beginTourSteps() {
+  if (!tourOpen || tourPhase !== 'intro') return
+  tourPhase = 'steps'
+  introLeave()
+  introEl.classList.add('leaving')
+  clearTimeout(introHideT)
+  introHideT = setTimeout(() => introEl.classList.add('hidden'), 750)
+  tourSpot.classList.remove('hidden')
+  tourCard.classList.remove('hidden')
+  renderTourStep()
 }
 
 function endTour() {
   if (!tourOpen) return
   tourOpen = false
+  introLeave()
+  clearTimeout(introHideT)
+  introEl.classList.add('hidden')
+  introEl.classList.remove('leaving', 'play')
   tourEl.classList.add('hidden')
   try { localStorage.setItem('drift-tour-done', '1') } catch {}
   scheduleLayout()
@@ -3065,13 +3195,89 @@ function prevTour() {
 function renderTourStep() {
   const step = TOUR_STEPS[tourIdx]
   if (!step) return
-  $('#tourStepNum').textContent = `${tourIdx + 1} / ${TOUR_STEPS.length}`
+  $('#tourDots').innerHTML = TOUR_STEPS.map((_, i) =>
+    `<span class="${i === tourIdx ? 'on' : i < tourIdx ? 'done' : ''}"></span>`).join('')
+  $('#tourViz').innerHTML = step.viz || ''
   $('#tourTitle').textContent = step.title
   $('#tourBody').innerHTML = step.body
   $('#tourNext').textContent = tourIdx === TOUR_STEPS.length - 1 ? 'Start drifting ◍' : 'Next ›'
   $('#tourBack').classList.toggle('hidden', tourIdx === 0)
   tourCard.classList.toggle('center', !stepTarget(step))
+  tourCard.classList.remove('anim')
+  void tourCard.offsetWidth // restart the step-in animation
+  tourCard.classList.add('anim')
   positionTour()
+}
+
+// ----- intro scene machinery -----
+
+let introRAF = 0
+let introTx = 0, introTy = 0, introCx = 0, introCy = 0
+let introBuilt = false
+
+function introEnter() {
+  introEl.classList.remove('hidden', 'leaving')
+  buildIntroParticles()
+  introFitStage()
+  // Restart the staged entrance animations on every (re)play.
+  introEl.classList.remove('play')
+  void introEl.offsetWidth
+  introEl.classList.add('play')
+  introTx = introTy = introCx = introCy = 0
+  introEl.style.setProperty('--mx', '0')
+  introEl.style.setProperty('--my', '0')
+  tourEl.addEventListener('pointermove', introPointer)
+  cancelAnimationFrame(introRAF)
+  introRAF = requestAnimationFrame(introTick)
+}
+
+function introLeave() {
+  tourEl.removeEventListener('pointermove', introPointer)
+  cancelAnimationFrame(introRAF)
+  introRAF = 0
+}
+
+function introPointer(e) {
+  introTx = clamp((e.clientX / innerWidth) * 2 - 1, -1, 1)
+  introTy = clamp((e.clientY / innerHeight) * 2 - 1, -1, 1)
+}
+
+function introTick() {
+  // Ease toward the pointer so the parallax layers glide instead of jitter.
+  introCx += (introTx - introCx) * 0.06
+  introCy += (introTy - introCy) * 0.06
+  introEl.style.setProperty('--mx', introCx.toFixed(4))
+  introEl.style.setProperty('--my', introCy.toFixed(4))
+  introRAF = requestAnimationFrame(introTick)
+}
+
+function introFitStage() {
+  const s = Math.min(1, innerWidth / 1150, (innerHeight - 40) / 680)
+  $('#introStage').style.setProperty('--ss', s.toFixed(3))
+}
+
+function buildIntroParticles() {
+  if (introBuilt) return
+  introBuilt = true
+  const host = $('#introParticles')
+  const frag = document.createDocumentFragment()
+  const tones = ['255,190,140', '255,150,150', '255,220,190', '235,180,255']
+  for (let i = 0; i < 26; i++) {
+    const p = document.createElement('span')
+    p.className = 'ipart'
+    const size = 1.5 + Math.random() * 2.5
+    const tone = tones[i % tones.length]
+    p.style.width = p.style.height = size.toFixed(1) + 'px'
+    p.style.left = (Math.random() * 100).toFixed(2) + 'vw'
+    p.style.background = `rgb(${tone})`
+    p.style.boxShadow = `0 0 ${(size * 3).toFixed(0)}px rgba(${tone},0.5)`
+    p.style.setProperty('--pd', (16 + Math.random() * 18).toFixed(1) + 's')
+    p.style.setProperty('--pl', (-Math.random() * 34).toFixed(1) + 's')
+    p.style.setProperty('--po', (0.25 + Math.random() * 0.5).toFixed(2))
+    p.style.setProperty('--pxs', ((Math.random() - 0.5) * 120).toFixed(0) + 'px')
+    frag.appendChild(p)
+  }
+  host.appendChild(frag)
 }
 
 function stepTarget(step) {
@@ -3082,7 +3288,7 @@ function stepTarget(step) {
 // Positions are re-derived every layout frame, so the spotlight tracks its
 // target through pans, zooms, and window resizes.
 function positionTour() {
-  if (!tourOpen) return
+  if (!tourOpen || tourPhase !== 'steps') return
   const step = TOUR_STEPS[tourIdx]
   const t = stepTarget(step)
   if (t) {
@@ -3101,11 +3307,28 @@ function positionTour() {
   const cw = tourCard.offsetWidth, ch = tourCard.offsetHeight
   let x, y
   if (t) {
+    // Prefers below → above → beside; targets taller than ~45% of the canvas
+    // (spotlighted page cards) prefer the side instead, so the coach card
+    // never buries the thing it's pointing at.
     const r = t.getBoundingClientRect()
-    x = clamp(r.left + r.width / 2 - cw / 2, 16, innerWidth - cw - 16)
-    y = r.bottom + 22
-    if (y + ch > innerHeight - 16) y = r.top - ch - 22
-    if (y < 16) y = clamp(innerHeight / 2 - ch / 2, 16, innerHeight - ch - 16)
+    const m = 22, pad = 16
+    const cx = clamp(r.left + r.width / 2 - cw / 2, pad, innerWidth - cw - pad)
+    const cy = clamp(r.top + r.height / 2 - ch / 2, TOOLBAR + pad, innerHeight - ch - pad)
+    const fits = {
+      below: r.bottom + m + ch <= innerHeight - pad,
+      above: r.top - m - ch >= TOOLBAR + pad,
+      right: r.right + m + cw <= innerWidth - pad,
+      left: r.left - m - cw >= pad
+    }
+    const big = r.height > (innerHeight - TOOLBAR) * 0.45
+    const order = big ? ['right', 'left', 'below', 'above'] : ['below', 'above', 'right', 'left']
+    switch (order.find(k => fits[k])) {
+      case 'below': x = cx; y = r.bottom + m; break
+      case 'above': x = cx; y = r.top - m - ch; break
+      case 'right': x = r.right + m; y = cy; break
+      case 'left': x = r.left - m - cw; y = cy; break
+      default: x = cx; y = clamp(innerHeight / 2 - ch / 2, TOOLBAR + pad, innerHeight - ch - pad)
+    }
   } else {
     x = (innerWidth - cw) / 2
     y = clamp(innerHeight * 0.42 - ch / 2, 16, innerHeight - ch - 16)

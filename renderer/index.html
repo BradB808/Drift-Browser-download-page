@@ -93,9 +93,56 @@
     <div id="toast"></div>
 
     <div id="tour" class="hidden no-pan">
+      <div id="introScene" class="hidden">
+        <div class="introLayer" id="introAurora">
+          <div class="ablob a1"></div>
+          <div class="ablob a2"></div>
+          <div class="ablob a3"></div>
+        </div>
+        <div class="introLayer" id="introParticles"></div>
+        <div class="introLayer" id="introStageWrap">
+          <div id="introStage">
+            <svg id="introTrails" viewBox="0 0 1100 640" fill="none">
+              <path class="itrail t1" d="M 545 105 C 660 60, 750 70, 845 128"/>
+              <path class="itrail t2" d="M 205 175 C 230 290, 160 380, 155 465"/>
+              <path class="itrail t3" d="M 900 505 C 960 400, 990 280, 935 195"/>
+              <path class="ilink l1" d="M 360 90 L 470 70"/>
+              <path class="ilink l2" d="M 260 560 L 350 590"/>
+              <path class="ilink l3" d="M 760 590 L 850 555"/>
+              <circle class="istar s1" cx="360" cy="90" r="3"/>
+              <circle class="istar s2" cx="260" cy="560" r="3"/>
+              <circle class="istar s3" cx="760" cy="590" r="2.6"/>
+              <circle class="istar s4" cx="350" cy="590" r="2.2"/>
+              <circle class="istar s5" cx="1040" cy="330" r="2.6"/>
+              <circle class="istar s6" cx="60" cy="300" r="2.2"/>
+              <circle class="istar s7" cx="850" cy="555" r="2.2"/>
+              <circle class="istar s8" cx="470" cy="70" r="2.4"/>
+            </svg>
+            <div class="icfloat f1" style="--d:.15s; left:95px;  top:110px;"><div class="icard" style="width:170px; height:112px;"><div class="ichead"><span class="icfav"></span><span class="ictitle" style="width:64%"></span></div><div class="icline" style="width:82%"></div><div class="icline" style="width:60%"></div><div class="icline" style="width:71%"></div></div></div>
+            <div class="icfloat f2" style="--d:.27s; left:845px; top:75px;"><div class="icard glow" style="width:190px; height:124px;"><div class="ichead"><span class="icfav hot"></span><span class="ictitle" style="width:52%"></span></div><div class="icpic"></div><div class="icline" style="width:66%"></div></div></div>
+            <div class="icfloat f3" style="--d:.39s; left:62px;  top:440px;"><div class="icard" style="width:180px; height:118px;"><div class="ichead"><span class="icfav"></span><span class="ictitle" style="width:58%"></span></div><div class="icline" style="width:76%"></div><div class="icline" style="width:84%"></div><div class="icline" style="width:52%"></div></div></div>
+            <div class="icfloat f4" style="--d:.51s; left:860px; top:450px;"><div class="icard" style="width:170px; height:112px;"><div class="ichead"><span class="icfav"></span><span class="ictitle" style="width:66%"></span></div><div class="icpic warm"></div></div></div>
+            <div class="icfloat f5" style="--d:.63s; left:465px; top:26px;"><div class="icard" style="width:150px; height:100px;"><div class="ichead"><span class="icfav"></span><span class="ictitle" style="width:60%"></span></div><div class="icline" style="width:78%"></div><div class="icline" style="width:56%"></div></div></div>
+          </div>
+        </div>
+        <div class="introLayer" id="introText">
+          <div id="introGlow"></div>
+          <div id="introEyebrow">welcome to</div>
+          <div id="introWordmark"><span class="wmark">◍</span><span class="wl">D</span><span class="wl">R</span><span class="wl">I</span><span class="wl">F</span><span class="wl">T</span></div>
+          <div id="introTag">Tabs are a list. <b>Your web is a place.</b></div>
+          <div id="introSub">Every page is a card on an infinite canvas — pan it, zoom it, and connect your browsing into a map you can actually see.</div>
+          <div class="introBtns">
+            <button id="introGo">Show me around</button>
+            <button id="introSkip">Skip — start drifting</button>
+          </div>
+          <div id="introHint">takes about a minute &nbsp;·&nbsp; <kbd>esc</kbd> to skip</div>
+        </div>
+        <div id="introNoise"></div>
+      </div>
       <div id="tourSpot"></div>
       <div id="tourCard">
-        <div id="tourStepNum"></div>
+        <div id="tourViz"></div>
+        <div id="tourDots"></div>
         <div id="tourTitle"></div>
         <div id="tourBody"></div>
         <div class="tourbtns">
