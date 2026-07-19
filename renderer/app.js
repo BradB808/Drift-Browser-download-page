@@ -49,6 +49,7 @@ let hitSet = new Set()               // ids highlighted on canvas/minimap
 let ctxOpenFor = null
 let tourOpen = false
 let tourIdx = 0
+let tourPhase = 'intro'              // 'intro' (cinematic welcome scene) | 'steps' (coach-marks)
 let bmOpen = false
 let settingsOpen = false
 let settings = { bg: { mode: 'photos' } } // loaded from disk at boot
@@ -81,6 +82,7 @@ const toastEl = $('#toast')
 const tourEl = $('#tour')
 const tourSpot = $('#tourSpot')
 const tourCard = $('#tourCard')
+const introEl = $('#introScene')
 
 // ---------- helpers ----------
 
@@ -1638,8 +1640,17 @@ function wireGlobalInput() {
   window.addEventListener('keydown', e => {
     if (e.target.tagName === 'INPUT') return
     if (tourOpen) {
+      // A focused tour button already fires its click on Enter — don't also
+      // run the key logic here, or Enter double-fires (skips a step / flips
+      // the mute toggle while advancing). Arrow keys never click a button.
+      const enterOnBtn = e.key === 'Enter' && e.target.tagName === 'BUTTON'
+      if (tourPhase === 'intro') {
+        if (e.key === 'Escape') endTour()
+        else if (!enterOnBtn && (e.key === 'Enter' || e.key === 'ArrowRight')) beginTourSteps()
+        return
+      }
       if (e.key === 'Escape') endTour()
-      else if (e.key === 'Enter' || e.key === 'ArrowRight') nextTour()
+      else if (!enterOnBtn && (e.key === 'Enter' || e.key === 'ArrowRight')) nextTour()
       else if (e.key === 'ArrowLeft') prevTour()
       return
     }
@@ -1682,6 +1693,28 @@ function wireGlobalInput() {
   $('#tourNext').addEventListener('click', nextTour)
   $('#tourBack').addEventListener('click', prevTour)
   $('#tourSkip').addEventListener('click', endTour)
+  $('#introGo').addEventListener('click', beginTourSteps)
+  $('#introSkip').addEventListener('click', endTour)
+  $('#introMute').addEventListener('click', () => {
+    try { localStorage.setItem('drift-intro-sound', introSoundOn() ? 'off' : 'on') } catch {}
+    if (introSoundOn()) startIntroSound()
+    else stopIntroSound(0.15)
+    refreshIntroMute()
+  })
+  // The intro's constellation stage is a fixed 1100×640 design that scales
+  // down to fit small windows; keep it fitted through live resizes.
+  window.addEventListener('resize', () => {
+    if (tourOpen && tourPhase === 'intro') {
+      introFitStage()
+      // Repaint the starfield for the new size, at most a few times a second,
+      // plus one trailing repaint so the final drag frame isn't left stretched.
+      if (Date.now() - starfieldStamp > 300) buildIntroArt()
+      clearTimeout(starfieldResizeT)
+      starfieldResizeT = setTimeout(() => {
+        if (tourOpen && tourPhase === 'intro') buildIntroArt()
+      }, 220)
+    }
+  })
 
   minimap.addEventListener('mousedown', e => {
     const t = minimapTransform()
@@ -2989,48 +3022,143 @@ function drawMinimap() {
 }
 
 // ---------- walkthrough ----------
-// First-launch guided tour: a glass coach-mark card plus a sliding spotlight
-// over the real UI. Shown once (localStorage flag), replayable via ? or the
-// View menu.
+// First-launch experience: a cinematic full-screen intro scene (aurora, ember
+// particles, a drifting mini-constellation of glass cards, mouse parallax),
+// then a guided coach-mark tour — a glass card with an animated vignette per
+// step plus a sliding spotlight over the real UI. Shown once (localStorage
+// flag), replayable via ? or the View menu.
 
 const TOUR_STEPS = [
   {
-    title: 'Welcome to Drift',
-    body: 'There are no tabs here. Every page is a <b>card on an infinite canvas</b> — your browsing becomes a map you can see and rearrange. This tour takes about a minute.'
-  },
-  {
     title: 'Glide around',
-    body: 'Scroll with two fingers to <b>pan</b>. Pinch or <kbd>⌘</kbd>+scroll to <b>zoom</b> — pull back far enough and your pages become a constellation of thumbnails. <kbd>⌘0</kbd> fits everything on screen.'
+    body: 'Scroll with two fingers to <b>pan</b>. Pinch or <kbd>⌘</kbd>+scroll to <b>zoom</b> — pull back far enough and your pages become a constellation of thumbnails. <kbd>⌘0</kbd> fits everything on screen.',
+    viz: `<svg viewBox="0 0 390 116">
+      <rect class="vzdim" x="128" y="16" width="134" height="84" rx="10" stroke-dasharray="4 5"/>
+      <g class="vzPan">
+        <rect class="vzcard" x="58" y="28" width="84" height="56" rx="7"/>
+        <rect class="vzbar" x="66" y="36" width="40" height="5" rx="2.5"/>
+        <rect class="vzline" x="66" y="48" width="62" height="4" rx="2"/>
+        <rect class="vzline" x="66" y="57" width="48" height="4" rx="2"/>
+        <path class="vzdim" d="M 142 52 C 158 46, 162 42, 176 38"/>
+        <rect class="vzcard" x="176" y="14" width="76" height="50" rx="7"/>
+        <rect class="vzbar" x="184" y="22" width="34" height="5" rx="2.5"/>
+        <rect class="vzline" x="184" y="34" width="56" height="4" rx="2"/>
+        <rect class="vzline" x="184" y="43" width="42" height="4" rx="2"/>
+        <path class="vzdim" d="M 214 64 C 222 74, 230 78, 244 82"/>
+        <rect class="vzcard" x="244" y="66" width="72" height="44" rx="7"/>
+        <rect class="vzbar" x="252" y="74" width="32" height="5" rx="2.5"/>
+        <rect class="vzline" x="252" y="86" width="52" height="4" rx="2"/>
+      </g>
+    </svg>`
   },
   {
     title: 'This is a page card',
     body: 'Drag the <b>header</b> to move it, the corner grip to resize. <b>Double-click the header</b> to focus it — and <b>⛶</b> takes the page truly full-screen. <kbd>esc</kbd> floats you back out. Click its title to change the address.',
-    target: () => [...cards.values()][0]?.el
+    target: () => [...cards.values()][0]?.el,
+    viz: `<svg viewBox="0 0 390 116">
+      <rect class="vzcard lit" x="138" y="16" width="114" height="84" rx="9"/>
+      <rect class="vzbar vzPulse" x="146" y="24" width="98" height="11" rx="4"/>
+      <rect class="vzline" x="146" y="46" width="82" height="5" rx="2.5"/>
+      <rect class="vzline" x="146" y="58" width="64" height="5" rx="2.5"/>
+      <rect class="vzline" x="146" y="70" width="74" height="5" rx="2.5"/>
+      <circle class="vzdot vzGripDot" cx="248" cy="96" r="4.5"/>
+    </svg>`
   },
   {
     title: 'Open anything',
     body: 'Press <kbd>⌘T</kbd> or double-click any empty spot on the canvas. Type an address or just search. Hit <b>☆</b> on any card to bookmark it — your bookmarks live right here in <kbd>⌘T</kbd>.',
-    target: () => $('#btnNew')
+    target: () => $('#btnNew'),
+    viz: `<svg viewBox="0 0 390 116">
+      <rect class="vzcard" x="93" y="40" width="204" height="36" rx="18"/>
+      <circle class="vzdim" cx="114" cy="58" r="5"/>
+      <path class="vzdim" d="M 118 62 L 123 67"/>
+      <rect class="vzbar vzType" x="134" y="54" width="86" height="8" rx="4"/>
+      <rect class="vzCaret" x="226" y="49" width="2" height="18" rx="1" fill="#ffb469"/>
+    </svg>`
   },
   {
     title: 'Trails, not history',
     body: 'When a page opens a link "in a new tab", Drift spawns a <b>child card with a trail line</b> back to its parent. Draw one yourself: <b>drag the ○ on a card\'s right edge onto another card</b>. Double-click a trail to remove it, right-click a card to copy a whole trail as Markdown.',
-    target: () => [...cards.values()][1]?.el
+    target: () => [...cards.values()][1]?.el,
+    viz: `<svg viewBox="0 0 390 116">
+      <rect class="vzcard" x="52" y="34" width="66" height="48" rx="7"/>
+      <rect class="vzbar" x="60" y="42" width="30" height="5" rx="2.5"/>
+      <rect class="vzline" x="60" y="54" width="48" height="4" rx="2"/>
+      <rect class="vzline" x="60" y="63" width="38" height="4" rx="2"/>
+      <rect class="vzcard lit" x="272" y="32" width="66" height="48" rx="7"/>
+      <rect class="vzbar" x="280" y="40" width="30" height="5" rx="2.5"/>
+      <rect class="vzline" x="280" y="52" width="48" height="4" rx="2"/>
+      <rect class="vzline" x="280" y="61" width="38" height="4" rx="2"/>
+      <path class="vztrail vzDraw" d="M 118 58 C 165 30, 225 30, 272 56"/>
+      <!-- no cx/cy: offset-path translates additively from the element's own
+           position in Chromium, so the dot must start at 0,0 to ride the path -->
+      <circle class="vzdot vzTravel" r="4"/>
+      <circle class="vzdot" cx="118" cy="58" r="3.2"/>
+      <circle class="vzdot" cx="272" cy="56" r="3.2"/>
+    </svg>`
   },
   {
     title: 'Zones keep you organized',
     body: 'Zones are named regions — "Trip planning", "Job hunt". <b>Drag the label</b> and every card inside travels along. Click the dot to recolor, the name to rename. <kbd>⇧⌘N</kbd> makes a new one.',
-    target: () => [...zones.values()][0]?.el.querySelector('.zlabel') || $('#btnZone')
+    target: () => [...zones.values()][0]?.el.querySelector('.zlabel') || $('#btnZone'),
+    viz: `<svg viewBox="0 0 390 116">
+      <rect class="vzZone" x="110" y="22" width="170" height="84" rx="10"/>
+      <g class="vzZoneLabel">
+        <rect x="122" y="14" width="62" height="15" rx="7.5" fill="rgba(255,154,94,0.85)"/>
+        <rect x="132" y="20" width="42" height="3.5" rx="1.75" fill="rgba(35,19,13,0.7)"/>
+      </g>
+      <rect class="vzcard" x="128" y="44" width="58" height="42" rx="6"/>
+      <rect class="vzbar" x="135" y="51" width="26" height="4" rx="2"/>
+      <rect class="vzline" x="135" y="61" width="40" height="3.5" rx="1.75"/>
+      <rect class="vzcard" x="204" y="52" width="58" height="42" rx="6"/>
+      <rect class="vzbar" x="211" y="59" width="26" height="4" rx="2"/>
+      <rect class="vzline" x="211" y="69" width="40" height="3.5" rx="1.75"/>
+    </svg>`
   },
   {
     title: 'Find and tidy',
     body: '<kbd>⌘F</kbd> searches every card on your canvas — matches light up on the map. <b>Tidy</b> (<kbd>⇧⌘T</kbd>) auto-arranges your trails into clean trees.',
-    target: () => $('#btnTidy')
+    target: () => $('#btnTidy'),
+    viz: `<svg viewBox="0 0 390 116">
+      <g class="vzScatter">
+        <circle class="vzdot" cx="132" cy="30" r="5"/>
+        <circle class="vzdot" cx="258" cy="84" r="5"/>
+        <circle class="vzdot" cx="178" cy="90" r="5"/>
+        <circle class="vzdot" cx="288" cy="26" r="5"/>
+        <circle class="vzdot" cx="216" cy="46" r="5"/>
+        <circle class="vzdot" cx="148" cy="66" r="5"/>
+      </g>
+      <g class="vzTree">
+        <path class="vzdim" d="M 132 58 C 158 58, 172 26, 200 26"/>
+        <path class="vzdim" d="M 132 58 L 200 58"/>
+        <path class="vzdim" d="M 132 58 C 158 58, 172 90, 200 90"/>
+        <path class="vzdim" d="M 200 26 L 268 26"/>
+        <circle class="vzdot" cx="132" cy="58" r="5"/>
+        <circle class="vzdot" cx="200" cy="26" r="5"/>
+        <circle class="vzdot" cx="200" cy="58" r="5"/>
+        <circle class="vzdot" cx="200" cy="90" r="5"/>
+        <circle class="vzdot" cx="268" cy="26" r="5"/>
+      </g>
+    </svg>`
   },
   {
     title: 'It all just stays',
     body: 'Cards, trails, zones, bookmarks — everything lives <b>on your machine</b> and is right where you left it next launch. Closed something by accident? <b>Right-click → Reopen closed card</b>. Replay this tour anytime with <kbd>?</kbd>. Now go drift. ◍',
-    target: () => $('#btnHelp')
+    target: () => $('#btnHelp'),
+    viz: `<svg viewBox="0 0 390 116">
+      <path class="vzdim" d="M 195 58 L 122 34"/>
+      <path class="vzdim" d="M 195 58 L 272 30"/>
+      <path class="vzdim" d="M 195 58 L 262 88"/>
+      <circle class="istar" cx="122" cy="34" r="3"/>
+      <circle class="istar" cx="272" cy="30" r="3"/>
+      <circle class="istar" cx="262" cy="88" r="3"/>
+      <circle class="istar" cx="104" cy="82" r="2.2"/>
+      <circle class="istar" cx="300" cy="62" r="2.2"/>
+      <circle class="vzRing" cx="195" cy="58" r="26"/>
+      <circle class="vzRing r2" cx="195" cy="58" r="26"/>
+      <circle cx="195" cy="58" r="12" fill="none" stroke="#ffb469" stroke-width="2"/>
+      <circle class="vzdot" cx="195" cy="58" r="4.5"/>
+    </svg>`
   }
 ]
 
@@ -3039,39 +3167,493 @@ function startTour() {
   if (paletteOpen) closePalette()
   tourOpen = true
   tourIdx = 0
+  tourPhase = 'intro'
   tourEl.classList.remove('hidden')
-  renderTourStep()
+  tourSpot.classList.add('hidden')
+  tourCard.classList.add('hidden')
+  introEnter()
   scheduleLayout() // detach live views under the overlay
+}
+
+// Hand-off from the intro scene to the coach-mark steps: the scene fades and
+// gently scales away, revealing the spotlighted UI beneath.
+let introHideT = 0
+
+function beginTourSteps() {
+  if (!tourOpen || tourPhase !== 'intro') return
+  tourPhase = 'steps'
+  introLeave()
+  stopIntroSound(1.1, true) // fade the bed out under a soft hand-off whoosh
+  introEl.classList.add('leaving')
+  clearTimeout(introHideT)
+  introHideT = setTimeout(() => introEl.classList.add('hidden'), 750)
+  tourSpot.classList.remove('hidden')
+  tourCard.classList.remove('hidden')
+  renderTourStep()
 }
 
 function endTour() {
   if (!tourOpen) return
   tourOpen = false
+  introLeave()
+  stopIntroSound(0.5)
+  clearTimeout(introHideT)
+  clearTimeout(starfieldResizeT)
+  introEl.classList.add('hidden')
+  introEl.classList.remove('leaving', 'play')
   tourEl.classList.add('hidden')
+  // Release the full-res starfield bitmap (~20MB at retina); it re-renders on
+  // replay via buildIntroArt(). The small orb textures stay cached.
+  const stars = $('#introStars')
+  if (stars) { stars.width = stars.height = 1 }
+  starfieldStamp = 0
   try { localStorage.setItem('drift-tour-done', '1') } catch {}
   scheduleLayout()
 }
 
 function nextTour() {
+  if (!tourOpen) return
+  if (tourPhase === 'intro') { beginTourSteps(); return } // advancing the intro = entering the steps
   if (tourIdx >= TOUR_STEPS.length - 1) { endTour(); return }
   tourIdx++
   renderTourStep()
 }
 
 function prevTour() {
+  if (tourPhase !== 'steps') return
   if (tourIdx > 0) { tourIdx--; renderTourStep() }
 }
 
 function renderTourStep() {
   const step = TOUR_STEPS[tourIdx]
   if (!step) return
-  $('#tourStepNum').textContent = `${tourIdx + 1} / ${TOUR_STEPS.length}`
+  $('#tourDots').innerHTML = TOUR_STEPS.map((_, i) =>
+    `<span class="${i === tourIdx ? 'on' : i < tourIdx ? 'done' : ''}"></span>`).join('')
+  $('#tourViz').innerHTML = step.viz || ''
   $('#tourTitle').textContent = step.title
   $('#tourBody').innerHTML = step.body
   $('#tourNext').textContent = tourIdx === TOUR_STEPS.length - 1 ? 'Start drifting ◍' : 'Next ›'
   $('#tourBack').classList.toggle('hidden', tourIdx === 0)
   tourCard.classList.toggle('center', !stepTarget(step))
+  tourCard.classList.remove('anim')
+  void tourCard.offsetWidth // restart the step-in animation
+  tourCard.classList.add('anim')
   positionTour()
+}
+
+// ----- intro scene machinery -----
+
+let introRAF = 0
+let introTx = 0, introTy = 0, introCx = 0, introCy = 0
+let introBuilt = false
+
+function introEnter() {
+  clearTimeout(introHideT) // a still-pending hand-off fade must not hide a replayed intro
+  introEl.classList.remove('hidden', 'leaving')
+  buildIntroParticles()
+  buildIntroArt()
+  introFitStage()
+  startIntroSound()
+  refreshIntroMute()
+  // Restart the staged entrance animations on every (re)play.
+  introEl.classList.remove('play')
+  void introEl.offsetWidth
+  introEl.classList.add('play')
+  introTx = introTy = introCx = introCy = 0
+  introEl.style.setProperty('--mx', '0')
+  introEl.style.setProperty('--my', '0')
+  tourEl.addEventListener('pointermove', introPointer)
+  cancelAnimationFrame(introRAF)
+  introRAF = requestAnimationFrame(introTick)
+}
+
+function introLeave() {
+  tourEl.removeEventListener('pointermove', introPointer)
+  cancelAnimationFrame(introRAF)
+  introRAF = 0
+}
+
+function introPointer(e) {
+  introTx = clamp((e.clientX / innerWidth) * 2 - 1, -1, 1)
+  introTy = clamp((e.clientY / innerHeight) * 2 - 1, -1, 1)
+}
+
+function introTick() {
+  // Ease toward the pointer so the parallax layers glide instead of jitter.
+  introCx += (introTx - introCx) * 0.06
+  introCy += (introTy - introCy) * 0.06
+  introEl.style.setProperty('--mx', introCx.toFixed(4))
+  introEl.style.setProperty('--my', introCy.toFixed(4))
+  introRAF = requestAnimationFrame(introTick)
+}
+
+function introFitStage() {
+  const s = Math.min(1, innerWidth / 1150, (innerHeight - 40) / 680)
+  $('#introStage').style.setProperty('--ss', s.toFixed(3))
+}
+
+// ----- intro sound -----
+// A synthesized ambient bed for the arrival scene: a warm detuned pad that
+// swells in under an opening lowpass ("sunrise"), a soft two-note bloom timed
+// to the wordmark reveal, and a filtered-noise whoosh on the hand-off. Pure
+// WebAudio — no assets, nothing fetched. Mutable via the speaker button
+// (persisted); never plays in staged (selftest/promo) runs.
+
+let introAC = null // { ctx, master } while the bed is playing
+
+function introSoundOn() {
+  try { return localStorage.getItem('drift-intro-sound') !== 'off' } catch { return true }
+}
+
+function refreshIntroMute() {
+  const b = $('#introMute')
+  if (b) b.textContent = introSoundOn() ? '🔊' : '🔇'
+}
+
+function startIntroSound() {
+  if (HEADLESS || !introSoundOn() || introAC) return
+  let ctx
+  try { ctx = new AudioContext() } catch { return }
+  if (ctx.state === 'suspended') ctx.resume().catch(() => {})
+  const t0 = ctx.currentTime
+  const master = ctx.createGain()
+  master.gain.setValueAtTime(0.0001, t0)
+  master.gain.exponentialRampToValueAtTime(0.14, t0 + 4.5)
+  master.connect(ctx.destination)
+
+  // Warm pad: an A-major spread with gently detuned pairs (slow beating).
+  const lp = ctx.createBiquadFilter()
+  lp.type = 'lowpass'
+  lp.frequency.setValueAtTime(420, t0)
+  lp.frequency.linearRampToValueAtTime(950, t0 + 5.5)
+  lp.Q.value = 0.4
+  lp.connect(master)
+  const padGain = ctx.createGain()
+  padGain.gain.value = 0.5
+  padGain.connect(lp)
+  for (const [f, g] of [[55, 0.5], [110, 0.6], [110.5, 0.35], [164.8, 0.4], [165.4, 0.25], [220, 0.3], [277.2, 0.16]]) {
+    const o = ctx.createOscillator()
+    o.type = f < 100 ? 'sine' : 'triangle'
+    o.frequency.value = f
+    const og = ctx.createGain()
+    og.gain.value = g
+    o.connect(og)
+    og.connect(padGain)
+    o.start(t0)
+  }
+
+  // A faint high shimmer that breathes on a slow LFO.
+  const sh = ctx.createOscillator()
+  sh.type = 'sine'
+  sh.frequency.value = 1760
+  const shg = ctx.createGain()
+  shg.gain.value = 0.0001
+  const lfo = ctx.createOscillator()
+  lfo.frequency.value = 0.13
+  const lfog = ctx.createGain()
+  lfog.gain.value = 0.006
+  lfo.connect(lfog)
+  lfog.connect(shg.gain)
+  sh.connect(shg)
+  shg.connect(master)
+  sh.start(t0)
+  lfo.start(t0)
+
+  // Riser: a soft filtered-noise swell under the orb ring, peaking right as
+  // the ring collapses into the mark (~3s), then ducking under the bloom.
+  {
+    const len = Math.floor(ctx.sampleRate * 4)
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate)
+    const ch = buf.getChannelData(0)
+    for (let i = 0; i < len; i++) ch[i] = Math.random() * 2 - 1
+    const src = ctx.createBufferSource()
+    src.buffer = buf
+    const bp = ctx.createBiquadFilter()
+    bp.type = 'bandpass'
+    bp.frequency.setValueAtTime(260, t0 + 0.6)
+    bp.frequency.exponentialRampToValueAtTime(900, t0 + 3.0)
+    bp.Q.value = 1.2
+    const rg = ctx.createGain()
+    rg.gain.setValueAtTime(0.0001, t0 + 0.6)
+    rg.gain.exponentialRampToValueAtTime(0.022, t0 + 3.0)
+    rg.gain.exponentialRampToValueAtTime(0.0001, t0 + 3.6)
+    src.connect(bp)
+    bp.connect(rg)
+    rg.connect(master)
+    src.start(t0 + 0.6)
+    src.stop(t0 + 3.8)
+  }
+
+  // Bloom: two soft sine notes as the ◍ mark and wordmark land (~3.05s in).
+  for (const [f, at, dur, g] of [[880, 3.05, 2.6, 0.05], [1108.7, 3.2, 2.4, 0.035]]) {
+    const o = ctx.createOscillator()
+    o.type = 'sine'
+    o.frequency.value = f
+    const og = ctx.createGain()
+    og.gain.setValueAtTime(0.0001, t0 + at)
+    og.gain.exponentialRampToValueAtTime(g, t0 + at + 0.08)
+    og.gain.exponentialRampToValueAtTime(0.0001, t0 + at + dur)
+    o.connect(og)
+    og.connect(master)
+    o.start(t0 + at)
+    o.stop(t0 + at + dur + 0.1)
+  }
+  introAC = { ctx, master }
+}
+
+function stopIntroSound(fade = 0.6, whoosh = false) {
+  const a = introAC
+  if (!a) return
+  introAC = null
+  const t = a.ctx.currentTime
+  if (whoosh) {
+    // Filtered-noise sweep: the "release" into the canvas.
+    const len = Math.floor(a.ctx.sampleRate)
+    const buf = a.ctx.createBuffer(1, len, a.ctx.sampleRate)
+    const ch = buf.getChannelData(0)
+    for (let i = 0; i < len; i++) ch[i] = (Math.random() * 2 - 1) * (1 - i / len)
+    const src = a.ctx.createBufferSource()
+    src.buffer = buf
+    const bp = a.ctx.createBiquadFilter()
+    bp.type = 'bandpass'
+    bp.frequency.setValueAtTime(1400, t)
+    bp.frequency.exponentialRampToValueAtTime(180, t + 0.9)
+    bp.Q.value = 0.8
+    const g = a.ctx.createGain()
+    g.gain.setValueAtTime(0.06, t)
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.95)
+    src.connect(bp)
+    bp.connect(g)
+    g.connect(a.ctx.destination)
+    src.start(t)
+  }
+  a.master.gain.cancelScheduledValues(t)
+  a.master.gain.setValueAtTime(Math.max(a.master.gain.value, 0.0001), t)
+  a.master.gain.exponentialRampToValueAtTime(0.0001, t + fade)
+  setTimeout(() => a.ctx.close().catch(() => {}), fade * 1000 + 500)
+}
+
+// ----- intro artwork (canvas-rendered, photographic-grade) -----
+// The starfield and planet surfaces are painted procedurally at intro time:
+// thousands of PSF-glow stars with a dust band and warm nebula haze, and
+// fBm-banded marble textures with terminator lighting for the orbs. No image
+// assets, nothing fetched — it renders in a few hundred ms and is cached.
+
+function renderStarfield(c) {
+  const dpr = Math.min(devicePixelRatio || 1, 2)
+  const w = c.width = Math.ceil(innerWidth * dpr)
+  const h = c.height = Math.ceil(innerHeight * dpr)
+  const x = c.getContext('2d')
+  x.clearRect(0, 0, w, h)
+
+  // Faint warm nebula haze, asymmetric so it reads shot, not generated.
+  const haze = [
+    [0.22, 0.24, 0.34, '150,150,162', 0.05],
+    [0.78, 0.18, 0.30, '185,185,195', 0.045],
+    [0.60, 0.85, 0.38, '130,130,142', 0.04],
+    [0.10, 0.75, 0.26, '170,170,180', 0.035]
+  ]
+  for (const [px, py, pr, tone, a] of haze) {
+    const g = x.createRadialGradient(px * w, py * h, 0, px * w, py * h, pr * Math.max(w, h))
+    g.addColorStop(0, `rgba(${tone},${a})`)
+    g.addColorStop(1, 'rgba(0,0,0,0)')
+    x.fillStyle = g
+    x.fillRect(0, 0, w, h)
+  }
+
+  // Star colors: mostly white/warm-white, a few cool glints for realism.
+  const tones = ['255,255,255', '255,255,255', '245,245,248', '228,228,234', '214,218,238']
+  const star = (sx, sy, r, a, tone) => {
+    if (r > 0.9) {
+      const g = x.createRadialGradient(sx, sy, 0, sx, sy, r * 5)
+      g.addColorStop(0, `rgba(${tone},${a})`)
+      g.addColorStop(0.25, `rgba(${tone},${a * 0.35})`)
+      g.addColorStop(1, 'rgba(0,0,0,0)')
+      x.fillStyle = g
+      x.beginPath()
+      x.arc(sx, sy, r * 5, 0, 7)
+      x.fill()
+    }
+    x.fillStyle = `rgba(${tone},${Math.min(1, a * 1.25)})`
+    x.beginPath()
+    x.arc(sx, sy, r, 0, 7)
+    x.fill()
+  }
+
+  // Field: a brightness power-law — thousands faint, a handful brilliant.
+  const n = Math.round((w * h) / 1500)
+  for (let i = 0; i < n; i++) {
+    const p = Math.pow(Math.random(), 3.2)
+    star(Math.random() * w, Math.random() * h,
+      (0.35 + p * 1.9) * dpr * 0.7,
+      0.12 + p * 0.75,
+      tones[(Math.random() * tones.length) | 0])
+  }
+
+  // Dust band: a diagonal drift of dense faint stars + a soft haze lane.
+  const ang = -0.5, cx = w * 0.62, cy = h * 0.42
+  x.save()
+  x.translate(cx, cy)
+  x.rotate(ang)
+  const lane = x.createLinearGradient(0, -h * 0.16, 0, h * 0.16)
+  lane.addColorStop(0, 'rgba(0,0,0,0)')
+  lane.addColorStop(0.5, 'rgba(208,208,216,0.05)')
+  lane.addColorStop(1, 'rgba(0,0,0,0)')
+  x.fillStyle = lane
+  x.fillRect(-w, -h * 0.16, w * 2, h * 0.32)
+  for (let i = 0; i < n * 0.45; i++) {
+    const bx = (Math.random() - 0.5) * w * 2
+    const by = (Math.random() + Math.random() + Math.random() - 1.5) * h * 0.11
+    const p = Math.pow(Math.random(), 3.5)
+    star(bx, by, (0.3 + p * 1.1) * dpr * 0.7, 0.1 + p * 0.5, tones[(Math.random() * tones.length) | 0])
+  }
+  x.restore()
+
+  // A few brilliant stars with diffraction spikes.
+  for (let i = 0; i < 4; i++) {
+    const sx = Math.random() * w, sy = Math.random() * h
+    const r = (1.6 + Math.random() * 1.2) * dpr
+    const tone = i === 0 ? '214,218,238' : '248,248,250'
+    star(sx, sy, r, 0.95, tone)
+    const len = r * (14 + Math.random() * 10)
+    for (const [dx, dy] of [[1, 0], [0, 1]]) {
+      const g = x.createLinearGradient(sx - dx * len, sy - dy * len, sx + dx * len, sy + dy * len)
+      g.addColorStop(0, 'rgba(0,0,0,0)')
+      g.addColorStop(0.5, `rgba(${tone},0.55)`)
+      g.addColorStop(1, 'rgba(0,0,0,0)')
+      x.fillStyle = g
+      x.fillRect(sx - dx * len - (dy ? dpr * 0.6 : 0), sy - dy * len - (dx ? dpr * 0.6 : 0),
+        dx ? len * 2 : dpr * 1.2, dy ? len * 2 : dpr * 1.2)
+    }
+  }
+}
+
+// Cheap fBm: stacked upscaled random grids, stretched horizontally so the
+// marbling reads as banded planet weather rather than static.
+function fbmBands(sz) {
+  const c = document.createElement('canvas')
+  c.width = c.height = sz
+  const x = c.getContext('2d')
+  x.fillStyle = '#808080'
+  x.fillRect(0, 0, sz, sz)
+  let alpha = 0.5
+  for (const cells of [5, 10, 20, 40, 80]) {
+    const t = document.createElement('canvas')
+    t.width = Math.max(2, Math.round(cells * 2.6))
+    t.height = cells
+    const tx = t.getContext('2d')
+    const img = tx.createImageData(t.width, t.height)
+    for (let i = 0; i < img.data.length; i += 4) {
+      const v = (Math.random() * 255) | 0
+      img.data[i] = img.data[i + 1] = img.data[i + 2] = v
+      img.data[i + 3] = 255
+    }
+    tx.putImageData(img, 0, 0)
+    x.globalAlpha = alpha
+    x.drawImage(t, 0, 0, sz, sz)
+    alpha *= 0.55
+  }
+  x.globalAlpha = 1
+  return x.getImageData(0, 0, sz, sz)
+}
+
+// 4-stop palettes, deep shadow → hot band → highlight. All warm.
+const PLANET_PALS = [
+  [[16, 16, 19], [70, 70, 78], [150, 150, 158], [230, 230, 235]],   // graphite
+  [[10, 10, 12], [45, 45, 52], [110, 110, 120], [200, 200, 208]],   // onyx
+  [[40, 40, 46], [120, 120, 130], [200, 200, 208], [248, 248, 250]],// pearl
+  [[20, 20, 24], [85, 85, 95], [165, 165, 175], [235, 235, 240]],   // smoke
+  [[14, 14, 17], [60, 60, 70], [140, 140, 150], [225, 225, 232]],   // sterling
+  [[30, 30, 35], [100, 100, 110], [185, 185, 195], [245, 245, 248]] // moonstone
+]
+
+function planetTexture(sz, pal) {
+  const c = document.createElement('canvas')
+  c.width = c.height = sz
+  const x = c.getContext('2d')
+  const noise = fbmBands(sz)
+  const out = x.createImageData(sz, sz)
+  for (let i = 0; i < noise.data.length; i += 4) {
+    // Push contrast, then map through the palette LUT.
+    let v = noise.data[i] / 255
+    v = Math.min(1, Math.max(0, (v - 0.5) * 1.8 + 0.5))
+    const t = v * 3
+    const k = Math.min(2, t | 0)
+    const f = t - k
+    const a = pal[k], b = pal[k + 1]
+    out.data[i] = a[0] + (b[0] - a[0]) * f
+    out.data[i + 1] = a[1] + (b[1] - a[1]) * f
+    out.data[i + 2] = a[2] + (b[2] - a[2]) * f
+    out.data[i + 3] = 255
+  }
+  x.putImageData(out, 0, 0)
+
+  // Star-dust glitter across the bright bands.
+  for (let i = 0; i < 150; i++) {
+    const px = Math.random() * sz, py = Math.random() * sz
+    const r = 0.4 + Math.random() * 0.9
+    x.fillStyle = `rgba(250,250,252,${0.25 + Math.random() * 0.55})`
+    x.beginPath()
+    x.arc(px, py, r, 0, 7)
+    x.fill()
+  }
+
+  // Lighting: dark terminator wrapping the lower-right, sun-side lift upper-left.
+  const dark = x.createRadialGradient(sz * 0.34, sz * 0.3, sz * 0.1, sz * 0.42, sz * 0.4, sz * 0.95)
+  dark.addColorStop(0, 'rgba(0,0,0,0)')
+  dark.addColorStop(0.55, 'rgba(5,5,7,0.25)')
+  dark.addColorStop(1, 'rgba(3,3,5,0.9)')
+  x.fillStyle = dark
+  x.fillRect(0, 0, sz, sz)
+  x.globalCompositeOperation = 'screen'
+  const lift = x.createRadialGradient(sz * 0.3, sz * 0.26, 0, sz * 0.3, sz * 0.26, sz * 0.5)
+  lift.addColorStop(0, 'rgba(105,105,115,0.5)')
+  lift.addColorStop(1, 'rgba(0,0,0,0)')
+  x.fillStyle = lift
+  x.fillRect(0, 0, sz, sz)
+  x.globalCompositeOperation = 'source-over'
+  return c
+}
+
+let introArtBuilt = false
+let starfieldStamp = 0
+let starfieldResizeT = 0
+
+function buildIntroArt() {
+  const stars = $('#introStars')
+  if (stars) renderStarfield(stars)
+  starfieldStamp = Date.now()
+  if (introArtBuilt) return
+  introArtBuilt = true
+  document.querySelectorAll('#introOrbs .orb').forEach((orb, i) => {
+    const tex = planetTexture(384, PLANET_PALS[i % PLANET_PALS.length])
+    tex.className = 'orbtex'
+    orb.prepend(tex)
+  })
+}
+
+function buildIntroParticles() {
+  if (introBuilt) return
+  introBuilt = true
+  const host = $('#introParticles')
+  const frag = document.createDocumentFragment()
+  const tones = ['255,255,255', '235,235,240', '215,215,224', '198,198,208']
+  for (let i = 0; i < 14; i++) {
+    const p = document.createElement('span')
+    p.className = 'ipart'
+    const size = 1.5 + Math.random() * 2.5
+    const tone = tones[i % tones.length]
+    p.style.width = p.style.height = size.toFixed(1) + 'px'
+    p.style.left = (Math.random() * 100).toFixed(2) + 'vw'
+    p.style.background = `rgb(${tone})`
+    p.style.boxShadow = `0 0 ${(size * 3).toFixed(0)}px rgba(${tone},0.5)`
+    p.style.setProperty('--pd', (16 + Math.random() * 18).toFixed(1) + 's')
+    p.style.setProperty('--pl', (-Math.random() * 34).toFixed(1) + 's')
+    p.style.setProperty('--po', (0.25 + Math.random() * 0.5).toFixed(2))
+    p.style.setProperty('--pxs', ((Math.random() - 0.5) * 120).toFixed(0) + 'px')
+    frag.appendChild(p)
+  }
+  host.appendChild(frag)
 }
 
 function stepTarget(step) {
@@ -3082,7 +3664,7 @@ function stepTarget(step) {
 // Positions are re-derived every layout frame, so the spotlight tracks its
 // target through pans, zooms, and window resizes.
 function positionTour() {
-  if (!tourOpen) return
+  if (!tourOpen || tourPhase !== 'steps') return
   const step = TOUR_STEPS[tourIdx]
   const t = stepTarget(step)
   if (t) {
@@ -3101,13 +3683,35 @@ function positionTour() {
   const cw = tourCard.offsetWidth, ch = tourCard.offsetHeight
   let x, y
   if (t) {
+    // Prefers below → above → beside; targets taller than ~45% of the canvas
+    // (spotlighted page cards) prefer the side instead, so the coach card
+    // never buries the thing it's pointing at.
     const r = t.getBoundingClientRect()
-    x = clamp(r.left + r.width / 2 - cw / 2, 16, innerWidth - cw - 16)
-    y = r.bottom + 22
-    if (y + ch > innerHeight - 16) y = r.top - ch - 22
-    if (y < 16) y = clamp(innerHeight / 2 - ch / 2, 16, innerHeight - ch - 16)
+    const m = 22, pad = 16
+    const vw = viewW() // keep the card off the native AI dock strip
+    const cx = clamp(r.left + r.width / 2 - cw / 2, pad, vw - cw - pad)
+    const cy = clamp(r.top + r.height / 2 - ch / 2, TOOLBAR + pad, innerHeight - ch - pad)
+    const fits = {
+      below: r.bottom + m + ch <= innerHeight - pad,
+      above: r.top - m - ch >= TOOLBAR + pad,
+      right: r.right + m + cw <= vw - pad,
+      left: r.left - m - cw >= pad
+    }
+    const big = r.height > (innerHeight - TOOLBAR) * 0.45
+    const order = big ? ['right', 'left', 'below', 'above'] : ['below', 'above', 'right', 'left']
+    switch (order.find(k => fits[k])) {
+      case 'below': x = cx; y = r.bottom + m; break
+      case 'above': x = cx; y = r.top - m - ch; break
+      case 'right': x = r.right + m; y = cy; break
+      case 'left': x = r.left - m - cw; y = cy; break
+      default: x = cx; y = clamp(innerHeight / 2 - ch / 2, TOOLBAR + pad, innerHeight - ch - pad)
+    }
+    // A spotlit card can sit (partly) off-viewport on an inherited canvas —
+    // the coach card itself must always stay readable on screen.
+    x = clamp(x, pad, vw - cw - pad)
+    y = clamp(y, TOOLBAR + pad, innerHeight - ch - pad)
   } else {
-    x = (innerWidth - cw) / 2
+    x = (viewW() - cw) / 2
     y = clamp(innerHeight * 0.42 - ch / 2, 16, innerHeight - ch - 16)
   }
   tourCard.style.left = x + 'px'
@@ -3398,9 +4002,12 @@ async function runSelftest() {
 
     startTour()
     if (!tourOpen) report.errors.push('walkthrough did not open')
+    if (tourPhase !== 'intro') report.errors.push('walkthrough did not start on the intro scene')
+    beginTourSteps()
+    if (tourPhase !== 'steps') report.errors.push('walkthrough did not enter the steps phase')
     for (let i = 0; i < TOUR_STEPS.length + 2 && tourOpen; i++) { nextTour(); await sleep(50) }
     if (tourOpen) report.errors.push('walkthrough did not finish after advancing')
-    startTour() // leave it open on the welcome step so the final capture shows it
+    startTour() // leave the cinematic intro up so the final capture shows it
     await sleep(300)
 
     report.v2 = { zones: zones.size, searchHits: report.searchHits, tourSteps: TOUR_STEPS.length, folders: true, vault: true }

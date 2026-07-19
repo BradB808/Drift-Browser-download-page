@@ -93,9 +93,86 @@
     <div id="toast"></div>
 
     <div id="tour" class="hidden no-pan">
+      <div id="introScene" class="hidden">
+        <div class="introLayer" id="introAurora">
+          <div class="ablob a1"></div>
+          <div class="ablob a2"></div>
+          <div class="ablob a3"></div>
+        </div>
+        <canvas class="introLayer" id="introStars"></canvas>
+        <div class="introLayer" id="introParticles"></div>
+        <div class="introLayer" id="introStageWrap">
+          <div id="introZoom">
+          <div id="introStage">
+            <svg id="introTrails" viewBox="0 0 1100 640" fill="none">
+              <path class="itrail t1" d="M 545 105 C 660 60, 750 70, 845 128"/>
+              <path class="itrail t2" d="M 205 175 C 230 290, 160 380, 155 465"/>
+              <path class="itrail t3" d="M 900 505 C 960 400, 990 280, 935 195"/>
+              <path class="ilink l1" d="M 360 90 L 470 70"/>
+              <path class="ilink l2" d="M 260 560 L 350 590"/>
+              <path class="ilink l3" d="M 760 590 L 850 555"/>
+              <circle class="istar s1" cx="360" cy="90" r="3"/>
+              <circle class="istar s2" cx="260" cy="560" r="3"/>
+              <circle class="istar s3" cx="760" cy="590" r="2.6"/>
+              <circle class="istar s4" cx="350" cy="590" r="2.2"/>
+              <circle class="istar s5" cx="1040" cy="330" r="2.6"/>
+              <circle class="istar s6" cx="60" cy="300" r="2.2"/>
+              <circle class="istar s7" cx="850" cy="555" r="2.2"/>
+              <circle class="istar s8" cx="470" cy="70" r="2.4"/>
+            </svg>
+            <div class="icfloat f1" style="--d:.15s; left:95px;  top:110px;"><div class="icard" style="width:170px; height:112px;"><div class="ichead"><span class="icfav"></span><span class="ictitle" style="width:64%"></span></div><div class="icline" style="width:82%"></div><div class="icline" style="width:60%"></div><div class="icline" style="width:71%"></div></div></div>
+            <div class="icfloat f2" style="--d:.27s; left:845px; top:75px;"><div class="icard glow" style="width:190px; height:124px;"><div class="ichead"><span class="icfav hot"></span><span class="ictitle" style="width:52%"></span></div><div class="icpic"></div><div class="icline" style="width:66%"></div></div></div>
+            <div class="icfloat f3" style="--d:.39s; left:62px;  top:440px;"><div class="icard" style="width:180px; height:118px;"><div class="ichead"><span class="icfav"></span><span class="ictitle" style="width:58%"></span></div><div class="icline" style="width:76%"></div><div class="icline" style="width:84%"></div><div class="icline" style="width:52%"></div></div></div>
+            <div class="icfloat f4" style="--d:.51s; left:860px; top:450px;"><div class="icard" style="width:170px; height:112px;"><div class="ichead"><span class="icfav"></span><span class="ictitle" style="width:66%"></span></div><div class="icpic warm"></div></div></div>
+            <div class="icfloat f5" style="--d:.63s; left:465px; top:26px;"><div class="icard" style="width:150px; height:100px;"><div class="ichead"><span class="icfav"></span><span class="ictitle" style="width:60%"></span></div><div class="icline" style="width:78%"></div><div class="icline" style="width:56%"></div></div></div>
+          </div>
+          </div>
+        </div>
+        <div class="introLayer" id="introOrbs">
+          <div class="dustring d1"></div>
+          <div class="dustring d2"></div>
+          <div class="orbfly" style="--a0:  10deg; --r0: 78vmin; --s0: 1.75; --dur: 3.5s; --del: 0s;">
+            <div class="orb" style="--sz: 300px; --blur: 11px; --spin: 24s; --base: #17171a; --glow: rgba(255,255,255,0.22);"></div>
+          </div>
+          <div class="orbfly" style="--a0:  72deg; --r0: 84vmin; --s0: 1.3; --dur: 3.3s; --del: .12s;">
+            <div class="orb" style="--sz: 210px; --blur: 3px; --spin: 30s; --base: #101013; --glow: rgba(220,220,230,0.18);"></div>
+          </div>
+          <div class="orbfly" style="--a0: 135deg; --r0: 74vmin; --s0: 1.55; --dur: 3.6s; --del: .05s;">
+            <div class="orb" style="--sz: 260px; --blur: 8px; --spin: 20s; --base: #1d1d21; --glow: rgba(255,255,255,0.24);"></div>
+          </div>
+          <div class="orbfly" style="--a0: 198deg; --r0: 88vmin; --s0: 1.15; --dur: 3.4s; --del: .2s;">
+            <div class="orb" style="--sz: 180px; --blur: 2px; --spin: 34s; --base: #131316; --glow: rgba(230,230,238,0.18);"></div>
+          </div>
+          <div class="orbfly" style="--a0: 256deg; --r0: 80vmin; --s0: 1.45; --dur: 3.55s; --del: .08s;">
+            <div class="orb" style="--sz: 240px; --blur: 6px; --spin: 27s; --base: #151518; --glow: rgba(240,240,246,0.2);"></div>
+          </div>
+          <div class="orbfly" style="--a0: 318deg; --r0: 76vmin; --s0: 1.05; --dur: 3.25s; --del: .16s;">
+            <div class="orb" style="--sz: 150px; --blur: 1.5px; --spin: 22s; --base: #19191d; --glow: rgba(255,255,255,0.2);"></div>
+          </div>
+        </div>
+        <div class="introLayer" id="introMist">
+          <div class="mist m1"></div>
+          <div class="mist m2"></div>
+        </div>
+        <div class="introLayer" id="introText">
+          <div id="introGlow"></div>
+          <div id="introEyebrow">welcome to</div>
+          <div id="introWordmark"><span class="wmark"><span class="wmspin">◍</span></span><span class="wl">D</span><span class="wl">R</span><span class="wl">I</span><span class="wl">F</span><span class="wl">T</span></div>
+          <div id="introTag">Tabs are a list. <b>Your web is a place.</b></div>
+          <div id="introSub">Every page is a card on an infinite canvas — pan it, zoom it, and connect your browsing into a map you can actually see.</div>
+          <div class="introBtns">
+            <button id="introGo">Show me around</button>
+            <button id="introSkip">Skip — start drifting</button>
+          </div>
+          <div id="introHint">takes about a minute &nbsp;·&nbsp; <kbd>esc</kbd> to skip</div>
+        </div>
+        <button id="introMute" title="Intro sound on/off">🔊</button>
+        <div id="introNoise"></div>
+      </div>
       <div id="tourSpot"></div>
       <div id="tourCard">
-        <div id="tourStepNum"></div>
+        <div id="tourViz"></div>
+        <div id="tourDots"></div>
         <div id="tourTitle"></div>
         <div id="tourBody"></div>
         <div class="tourbtns">
