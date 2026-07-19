@@ -1700,7 +1700,11 @@ function wireGlobalInput() {
   // The intro's constellation stage is a fixed 1100×640 design that scales
   // down to fit small windows; keep it fitted through live resizes.
   window.addEventListener('resize', () => {
-    if (tourOpen && tourPhase === 'intro') introFitStage()
+    if (tourOpen && tourPhase === 'intro') {
+      introFitStage()
+      // Repaint the starfield for the new size, at most a few times a second.
+      if (Date.now() - starfieldStamp > 300) buildIntroArt()
+    }
   })
 
   minimap.addEventListener('mousedown', e => {
@@ -3232,6 +3236,7 @@ function introEnter() {
   clearTimeout(introHideT) // a still-pending hand-off fade must not hide a replayed intro
   introEl.classList.remove('hidden', 'leaving')
   buildIntroParticles()
+  buildIntroArt()
   introFitStage()
   startIntroSound()
   refreshIntroMute()
@@ -3339,8 +3344,33 @@ function startIntroSound() {
   sh.start(t0)
   lfo.start(t0)
 
-  // Bloom: two soft sine notes as the wordmark lands (~2.45s in).
-  for (const [f, at, dur, g] of [[880, 2.45, 2.6, 0.05], [1108.7, 2.6, 2.4, 0.035]]) {
+  // Riser: a soft filtered-noise swell under the orb ring, peaking right as
+  // the ring collapses into the mark (~3s), then ducking under the bloom.
+  {
+    const len = Math.floor(ctx.sampleRate * 4)
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate)
+    const ch = buf.getChannelData(0)
+    for (let i = 0; i < len; i++) ch[i] = Math.random() * 2 - 1
+    const src = ctx.createBufferSource()
+    src.buffer = buf
+    const bp = ctx.createBiquadFilter()
+    bp.type = 'bandpass'
+    bp.frequency.setValueAtTime(260, t0 + 0.6)
+    bp.frequency.exponentialRampToValueAtTime(900, t0 + 3.0)
+    bp.Q.value = 1.2
+    const rg = ctx.createGain()
+    rg.gain.setValueAtTime(0.0001, t0 + 0.6)
+    rg.gain.exponentialRampToValueAtTime(0.022, t0 + 3.0)
+    rg.gain.exponentialRampToValueAtTime(0.0001, t0 + 3.6)
+    src.connect(bp)
+    bp.connect(rg)
+    rg.connect(master)
+    src.start(t0 + 0.6)
+    src.stop(t0 + 3.8)
+  }
+
+  // Bloom: two soft sine notes as the ◍ mark and wordmark land (~3.05s in).
+  for (const [f, at, dur, g] of [[880, 3.05, 2.6, 0.05], [1108.7, 3.2, 2.4, 0.035]]) {
     const o = ctx.createOscillator()
     o.type = 'sine'
     o.frequency.value = f
@@ -3388,13 +3418,211 @@ function stopIntroSound(fade = 0.6, whoosh = false) {
   setTimeout(() => a.ctx.close().catch(() => {}), fade * 1000 + 500)
 }
 
+// ----- intro artwork (canvas-rendered, photographic-grade) -----
+// The starfield and planet surfaces are painted procedurally at intro time:
+// thousands of PSF-glow stars with a dust band and warm nebula haze, and
+// fBm-banded marble textures with terminator lighting for the orbs. No image
+// assets, nothing fetched — it renders in a few hundred ms and is cached.
+
+function renderStarfield(c) {
+  const dpr = Math.min(devicePixelRatio || 1, 2)
+  const w = c.width = Math.ceil(innerWidth * dpr)
+  const h = c.height = Math.ceil(innerHeight * dpr)
+  const x = c.getContext('2d')
+  x.clearRect(0, 0, w, h)
+
+  // Faint warm nebula haze, asymmetric so it reads shot, not generated.
+  const haze = [
+    [0.22, 0.24, 0.34, '150,150,162', 0.05],
+    [0.78, 0.18, 0.30, '185,185,195', 0.045],
+    [0.60, 0.85, 0.38, '130,130,142', 0.04],
+    [0.10, 0.75, 0.26, '170,170,180', 0.035]
+  ]
+  for (const [px, py, pr, tone, a] of haze) {
+    const g = x.createRadialGradient(px * w, py * h, 0, px * w, py * h, pr * Math.max(w, h))
+    g.addColorStop(0, `rgba(${tone},${a})`)
+    g.addColorStop(1, 'rgba(0,0,0,0)')
+    x.fillStyle = g
+    x.fillRect(0, 0, w, h)
+  }
+
+  // Star colors: mostly white/warm-white, a few cool glints for realism.
+  const tones = ['255,255,255', '255,255,255', '245,245,248', '228,228,234', '214,218,238']
+  const star = (sx, sy, r, a, tone) => {
+    if (r > 0.9) {
+      const g = x.createRadialGradient(sx, sy, 0, sx, sy, r * 5)
+      g.addColorStop(0, `rgba(${tone},${a})`)
+      g.addColorStop(0.25, `rgba(${tone},${a * 0.35})`)
+      g.addColorStop(1, 'rgba(0,0,0,0)')
+      x.fillStyle = g
+      x.beginPath()
+      x.arc(sx, sy, r * 5, 0, 7)
+      x.fill()
+    }
+    x.fillStyle = `rgba(${tone},${Math.min(1, a * 1.25)})`
+    x.beginPath()
+    x.arc(sx, sy, r, 0, 7)
+    x.fill()
+  }
+
+  // Field: a brightness power-law — thousands faint, a handful brilliant.
+  const n = Math.round((w * h) / 1500)
+  for (let i = 0; i < n; i++) {
+    const p = Math.pow(Math.random(), 3.2)
+    star(Math.random() * w, Math.random() * h,
+      (0.35 + p * 1.9) * dpr * 0.7,
+      0.12 + p * 0.75,
+      tones[(Math.random() * tones.length) | 0])
+  }
+
+  // Dust band: a diagonal drift of dense faint stars + a soft haze lane.
+  const ang = -0.5, cx = w * 0.62, cy = h * 0.42
+  x.save()
+  x.translate(cx, cy)
+  x.rotate(ang)
+  const lane = x.createLinearGradient(0, -h * 0.16, 0, h * 0.16)
+  lane.addColorStop(0, 'rgba(0,0,0,0)')
+  lane.addColorStop(0.5, 'rgba(208,208,216,0.05)')
+  lane.addColorStop(1, 'rgba(0,0,0,0)')
+  x.fillStyle = lane
+  x.fillRect(-w, -h * 0.16, w * 2, h * 0.32)
+  for (let i = 0; i < n * 0.45; i++) {
+    const bx = (Math.random() - 0.5) * w * 2
+    const by = (Math.random() + Math.random() + Math.random() - 1.5) * h * 0.11
+    const p = Math.pow(Math.random(), 3.5)
+    star(bx, by, (0.3 + p * 1.1) * dpr * 0.7, 0.1 + p * 0.5, tones[(Math.random() * tones.length) | 0])
+  }
+  x.restore()
+
+  // A few brilliant stars with diffraction spikes.
+  for (let i = 0; i < 4; i++) {
+    const sx = Math.random() * w, sy = Math.random() * h
+    const r = (1.6 + Math.random() * 1.2) * dpr
+    const tone = i === 0 ? '214,218,238' : '248,248,250'
+    star(sx, sy, r, 0.95, tone)
+    const len = r * (14 + Math.random() * 10)
+    for (const [dx, dy] of [[1, 0], [0, 1]]) {
+      const g = x.createLinearGradient(sx - dx * len, sy - dy * len, sx + dx * len, sy + dy * len)
+      g.addColorStop(0, 'rgba(0,0,0,0)')
+      g.addColorStop(0.5, `rgba(${tone},0.55)`)
+      g.addColorStop(1, 'rgba(0,0,0,0)')
+      x.fillStyle = g
+      x.fillRect(sx - dx * len - (dy ? dpr * 0.6 : 0), sy - dy * len - (dx ? dpr * 0.6 : 0),
+        dx ? len * 2 : dpr * 1.2, dy ? len * 2 : dpr * 1.2)
+    }
+  }
+}
+
+// Cheap fBm: stacked upscaled random grids, stretched horizontally so the
+// marbling reads as banded planet weather rather than static.
+function fbmBands(sz) {
+  const c = document.createElement('canvas')
+  c.width = c.height = sz
+  const x = c.getContext('2d')
+  x.fillStyle = '#808080'
+  x.fillRect(0, 0, sz, sz)
+  let alpha = 0.5
+  for (const cells of [5, 10, 20, 40, 80]) {
+    const t = document.createElement('canvas')
+    t.width = Math.max(2, Math.round(cells * 2.6))
+    t.height = cells
+    const tx = t.getContext('2d')
+    const img = tx.createImageData(t.width, t.height)
+    for (let i = 0; i < img.data.length; i += 4) {
+      const v = (Math.random() * 255) | 0
+      img.data[i] = img.data[i + 1] = img.data[i + 2] = v
+      img.data[i + 3] = 255
+    }
+    tx.putImageData(img, 0, 0)
+    x.globalAlpha = alpha
+    x.drawImage(t, 0, 0, sz, sz)
+    alpha *= 0.55
+  }
+  x.globalAlpha = 1
+  return x.getImageData(0, 0, sz, sz)
+}
+
+// 4-stop palettes, deep shadow → hot band → highlight. All warm.
+const PLANET_PALS = [
+  [[16, 16, 19], [70, 70, 78], [150, 150, 158], [230, 230, 235]],   // graphite
+  [[10, 10, 12], [45, 45, 52], [110, 110, 120], [200, 200, 208]],   // onyx
+  [[40, 40, 46], [120, 120, 130], [200, 200, 208], [248, 248, 250]],// pearl
+  [[20, 20, 24], [85, 85, 95], [165, 165, 175], [235, 235, 240]],   // smoke
+  [[14, 14, 17], [60, 60, 70], [140, 140, 150], [225, 225, 232]],   // sterling
+  [[30, 30, 35], [100, 100, 110], [185, 185, 195], [245, 245, 248]] // moonstone
+]
+
+function planetTexture(sz, pal) {
+  const c = document.createElement('canvas')
+  c.width = c.height = sz
+  const x = c.getContext('2d')
+  const noise = fbmBands(sz)
+  const out = x.createImageData(sz, sz)
+  for (let i = 0; i < noise.data.length; i += 4) {
+    // Push contrast, then map through the palette LUT.
+    let v = noise.data[i] / 255
+    v = Math.min(1, Math.max(0, (v - 0.5) * 1.8 + 0.5))
+    const t = v * 3
+    const k = Math.min(2, t | 0)
+    const f = t - k
+    const a = pal[k], b = pal[k + 1]
+    out.data[i] = a[0] + (b[0] - a[0]) * f
+    out.data[i + 1] = a[1] + (b[1] - a[1]) * f
+    out.data[i + 2] = a[2] + (b[2] - a[2]) * f
+    out.data[i + 3] = 255
+  }
+  x.putImageData(out, 0, 0)
+
+  // Star-dust glitter across the bright bands.
+  for (let i = 0; i < 150; i++) {
+    const px = Math.random() * sz, py = Math.random() * sz
+    const r = 0.4 + Math.random() * 0.9
+    x.fillStyle = `rgba(250,250,252,${0.25 + Math.random() * 0.55})`
+    x.beginPath()
+    x.arc(px, py, r, 0, 7)
+    x.fill()
+  }
+
+  // Lighting: dark terminator wrapping the lower-right, sun-side lift upper-left.
+  const dark = x.createRadialGradient(sz * 0.34, sz * 0.3, sz * 0.1, sz * 0.42, sz * 0.4, sz * 0.95)
+  dark.addColorStop(0, 'rgba(0,0,0,0)')
+  dark.addColorStop(0.55, 'rgba(5,5,7,0.25)')
+  dark.addColorStop(1, 'rgba(3,3,5,0.9)')
+  x.fillStyle = dark
+  x.fillRect(0, 0, sz, sz)
+  x.globalCompositeOperation = 'screen'
+  const lift = x.createRadialGradient(sz * 0.3, sz * 0.26, 0, sz * 0.3, sz * 0.26, sz * 0.5)
+  lift.addColorStop(0, 'rgba(105,105,115,0.5)')
+  lift.addColorStop(1, 'rgba(0,0,0,0)')
+  x.fillStyle = lift
+  x.fillRect(0, 0, sz, sz)
+  x.globalCompositeOperation = 'source-over'
+  return c
+}
+
+let introArtBuilt = false
+let starfieldStamp = 0
+
+function buildIntroArt() {
+  const stars = $('#introStars')
+  if (stars) renderStarfield(stars)
+  starfieldStamp = Date.now()
+  if (introArtBuilt) return
+  introArtBuilt = true
+  document.querySelectorAll('#introOrbs .orb').forEach((orb, i) => {
+    const tex = planetTexture(384, PLANET_PALS[i % PLANET_PALS.length])
+    tex.className = 'orbtex'
+    orb.prepend(tex)
+  })
+}
+
 function buildIntroParticles() {
   if (introBuilt) return
   introBuilt = true
   const host = $('#introParticles')
   const frag = document.createDocumentFragment()
-  const tones = ['255,190,140', '255,150,150', '255,220,190', '235,180,255']
-  for (let i = 0; i < 26; i++) {
+  const tones = ['255,255,255', '235,235,240', '215,215,224', '198,198,208']
+  for (let i = 0; i < 14; i++) {
     const p = document.createElement('span')
     p.className = 'ipart'
     const size = 1.5 + Math.random() * 2.5
