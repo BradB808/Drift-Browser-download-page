@@ -1691,6 +1691,12 @@ function wireGlobalInput() {
   $('#tourSkip').addEventListener('click', endTour)
   $('#introGo').addEventListener('click', beginTourSteps)
   $('#introSkip').addEventListener('click', endTour)
+  $('#introMute').addEventListener('click', () => {
+    try { localStorage.setItem('drift-intro-sound', introSoundOn() ? 'off' : 'on') } catch {}
+    if (introSoundOn()) startIntroSound()
+    else stopIntroSound(0.15)
+    refreshIntroMute()
+  })
   // The intro's constellation stage is a fixed 1100×640 design that scales
   // down to fit small windows; keep it fitted through live resizes.
   window.addEventListener('resize', () => {
@@ -3071,6 +3077,8 @@ const TOUR_STEPS = [
       <rect class="vzline" x="280" y="52" width="48" height="4" rx="2"/>
       <rect class="vzline" x="280" y="61" width="38" height="4" rx="2"/>
       <path class="vztrail vzDraw" d="M 118 58 C 165 30, 225 30, 272 56"/>
+      <!-- no cx/cy: offset-path translates additively from the element's own
+           position in Chromium, so the dot must start at 0,0 to ride the path -->
       <circle class="vzdot vzTravel" r="4"/>
       <circle class="vzdot" cx="118" cy="58" r="3.2"/>
       <circle class="vzdot" cx="272" cy="56" r="3.2"/>
@@ -3162,6 +3170,7 @@ function beginTourSteps() {
   if (!tourOpen || tourPhase !== 'intro') return
   tourPhase = 'steps'
   introLeave()
+  stopIntroSound(1.1, true) // fade the bed out under a soft hand-off whoosh
   introEl.classList.add('leaving')
   clearTimeout(introHideT)
   introHideT = setTimeout(() => introEl.classList.add('hidden'), 750)
@@ -3174,6 +3183,7 @@ function endTour() {
   if (!tourOpen) return
   tourOpen = false
   introLeave()
+  stopIntroSound(0.5)
   clearTimeout(introHideT)
   introEl.classList.add('hidden')
   introEl.classList.remove('leaving', 'play')
@@ -3183,12 +3193,15 @@ function endTour() {
 }
 
 function nextTour() {
+  if (!tourOpen) return
+  if (tourPhase === 'intro') { beginTourSteps(); return } // advancing the intro = entering the steps
   if (tourIdx >= TOUR_STEPS.length - 1) { endTour(); return }
   tourIdx++
   renderTourStep()
 }
 
 function prevTour() {
+  if (tourPhase !== 'steps') return
   if (tourIdx > 0) { tourIdx--; renderTourStep() }
 }
 
@@ -3216,9 +3229,12 @@ let introTx = 0, introTy = 0, introCx = 0, introCy = 0
 let introBuilt = false
 
 function introEnter() {
+  clearTimeout(introHideT) // a still-pending hand-off fade must not hide a replayed intro
   introEl.classList.remove('hidden', 'leaving')
   buildIntroParticles()
   introFitStage()
+  startIntroSound()
+  refreshIntroMute()
   // Restart the staged entrance animations on every (re)play.
   introEl.classList.remove('play')
   void introEl.offsetWidth
@@ -3254,6 +3270,122 @@ function introTick() {
 function introFitStage() {
   const s = Math.min(1, innerWidth / 1150, (innerHeight - 40) / 680)
   $('#introStage').style.setProperty('--ss', s.toFixed(3))
+}
+
+// ----- intro sound -----
+// A synthesized ambient bed for the arrival scene: a warm detuned pad that
+// swells in under an opening lowpass ("sunrise"), a soft two-note bloom timed
+// to the wordmark reveal, and a filtered-noise whoosh on the hand-off. Pure
+// WebAudio — no assets, nothing fetched. Mutable via the speaker button
+// (persisted); never plays in staged (selftest/promo) runs.
+
+let introAC = null // { ctx, master } while the bed is playing
+
+function introSoundOn() {
+  try { return localStorage.getItem('drift-intro-sound') !== 'off' } catch { return true }
+}
+
+function refreshIntroMute() {
+  const b = $('#introMute')
+  if (b) b.textContent = introSoundOn() ? '🔊' : '🔇'
+}
+
+function startIntroSound() {
+  if (HEADLESS || !introSoundOn() || introAC) return
+  let ctx
+  try { ctx = new AudioContext() } catch { return }
+  if (ctx.state === 'suspended') ctx.resume().catch(() => {})
+  const t0 = ctx.currentTime
+  const master = ctx.createGain()
+  master.gain.setValueAtTime(0.0001, t0)
+  master.gain.exponentialRampToValueAtTime(0.14, t0 + 4.5)
+  master.connect(ctx.destination)
+
+  // Warm pad: an A-major spread with gently detuned pairs (slow beating).
+  const lp = ctx.createBiquadFilter()
+  lp.type = 'lowpass'
+  lp.frequency.setValueAtTime(420, t0)
+  lp.frequency.linearRampToValueAtTime(950, t0 + 5.5)
+  lp.Q.value = 0.4
+  lp.connect(master)
+  const padGain = ctx.createGain()
+  padGain.gain.value = 0.5
+  padGain.connect(lp)
+  for (const [f, g] of [[55, 0.5], [110, 0.6], [110.5, 0.35], [164.8, 0.4], [165.4, 0.25], [220, 0.3], [277.2, 0.16]]) {
+    const o = ctx.createOscillator()
+    o.type = f < 100 ? 'sine' : 'triangle'
+    o.frequency.value = f
+    const og = ctx.createGain()
+    og.gain.value = g
+    o.connect(og)
+    og.connect(padGain)
+    o.start(t0)
+  }
+
+  // A faint high shimmer that breathes on a slow LFO.
+  const sh = ctx.createOscillator()
+  sh.type = 'sine'
+  sh.frequency.value = 1760
+  const shg = ctx.createGain()
+  shg.gain.value = 0.0001
+  const lfo = ctx.createOscillator()
+  lfo.frequency.value = 0.13
+  const lfog = ctx.createGain()
+  lfog.gain.value = 0.006
+  lfo.connect(lfog)
+  lfog.connect(shg.gain)
+  sh.connect(shg)
+  shg.connect(master)
+  sh.start(t0)
+  lfo.start(t0)
+
+  // Bloom: two soft sine notes as the wordmark lands (~2.45s in).
+  for (const [f, at, dur, g] of [[880, 2.45, 2.6, 0.05], [1108.7, 2.6, 2.4, 0.035]]) {
+    const o = ctx.createOscillator()
+    o.type = 'sine'
+    o.frequency.value = f
+    const og = ctx.createGain()
+    og.gain.setValueAtTime(0.0001, t0 + at)
+    og.gain.exponentialRampToValueAtTime(g, t0 + at + 0.08)
+    og.gain.exponentialRampToValueAtTime(0.0001, t0 + at + dur)
+    o.connect(og)
+    og.connect(master)
+    o.start(t0 + at)
+    o.stop(t0 + at + dur + 0.1)
+  }
+  introAC = { ctx, master }
+}
+
+function stopIntroSound(fade = 0.6, whoosh = false) {
+  const a = introAC
+  if (!a) return
+  introAC = null
+  const t = a.ctx.currentTime
+  if (whoosh) {
+    // Filtered-noise sweep: the "release" into the canvas.
+    const len = Math.floor(a.ctx.sampleRate)
+    const buf = a.ctx.createBuffer(1, len, a.ctx.sampleRate)
+    const ch = buf.getChannelData(0)
+    for (let i = 0; i < len; i++) ch[i] = (Math.random() * 2 - 1) * (1 - i / len)
+    const src = a.ctx.createBufferSource()
+    src.buffer = buf
+    const bp = a.ctx.createBiquadFilter()
+    bp.type = 'bandpass'
+    bp.frequency.setValueAtTime(1400, t)
+    bp.frequency.exponentialRampToValueAtTime(180, t + 0.9)
+    bp.Q.value = 0.8
+    const g = a.ctx.createGain()
+    g.gain.setValueAtTime(0.06, t)
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.95)
+    src.connect(bp)
+    bp.connect(g)
+    g.connect(a.ctx.destination)
+    src.start(t)
+  }
+  a.master.gain.cancelScheduledValues(t)
+  a.master.gain.setValueAtTime(Math.max(a.master.gain.value, 0.0001), t)
+  a.master.gain.exponentialRampToValueAtTime(0.0001, t + fade)
+  setTimeout(() => a.ctx.close().catch(() => {}), fade * 1000 + 500)
 }
 
 function buildIntroParticles() {
@@ -3312,12 +3444,13 @@ function positionTour() {
     // never buries the thing it's pointing at.
     const r = t.getBoundingClientRect()
     const m = 22, pad = 16
-    const cx = clamp(r.left + r.width / 2 - cw / 2, pad, innerWidth - cw - pad)
+    const vw = viewW() // keep the card off the native AI dock strip
+    const cx = clamp(r.left + r.width / 2 - cw / 2, pad, vw - cw - pad)
     const cy = clamp(r.top + r.height / 2 - ch / 2, TOOLBAR + pad, innerHeight - ch - pad)
     const fits = {
       below: r.bottom + m + ch <= innerHeight - pad,
       above: r.top - m - ch >= TOOLBAR + pad,
-      right: r.right + m + cw <= innerWidth - pad,
+      right: r.right + m + cw <= vw - pad,
       left: r.left - m - cw >= pad
     }
     const big = r.height > (innerHeight - TOOLBAR) * 0.45
@@ -3329,8 +3462,12 @@ function positionTour() {
       case 'left': x = r.left - m - cw; y = cy; break
       default: x = cx; y = clamp(innerHeight / 2 - ch / 2, TOOLBAR + pad, innerHeight - ch - pad)
     }
+    // A spotlit card can sit (partly) off-viewport on an inherited canvas —
+    // the coach card itself must always stay readable on screen.
+    x = clamp(x, pad, vw - cw - pad)
+    y = clamp(y, TOOLBAR + pad, innerHeight - ch - pad)
   } else {
-    x = (innerWidth - cw) / 2
+    x = (viewW() - cw) / 2
     y = clamp(innerHeight * 0.42 - ch / 2, 16, innerHeight - ch - 16)
   }
   tourCard.style.left = x + 'px'
@@ -3621,9 +3758,12 @@ async function runSelftest() {
 
     startTour()
     if (!tourOpen) report.errors.push('walkthrough did not open')
+    if (tourPhase !== 'intro') report.errors.push('walkthrough did not start on the intro scene')
+    beginTourSteps()
+    if (tourPhase !== 'steps') report.errors.push('walkthrough did not enter the steps phase')
     for (let i = 0; i < TOUR_STEPS.length + 2 && tourOpen; i++) { nextTour(); await sleep(50) }
     if (tourOpen) report.errors.push('walkthrough did not finish after advancing')
-    startTour() // leave it open on the welcome step so the final capture shows it
+    startTour() // leave the cinematic intro up so the final capture shows it
     await sleep(300)
 
     report.v2 = { zones: zones.size, searchHits: report.searchHits, tourSteps: TOUR_STEPS.length, folders: true, vault: true }

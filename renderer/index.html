@@ -101,6 +101,7 @@
         </div>
         <div class="introLayer" id="introParticles"></div>
         <div class="introLayer" id="introStageWrap">
+          <div id="introZoom">
           <div id="introStage">
             <svg id="introTrails" viewBox="0 0 1100 640" fill="none">
               <path class="itrail t1" d="M 545 105 C 660 60, 750 70, 845 128"/>
@@ -124,11 +125,16 @@
             <div class="icfloat f4" style="--d:.51s; left:860px; top:450px;"><div class="icard" style="width:170px; height:112px;"><div class="ichead"><span class="icfav"></span><span class="ictitle" style="width:66%"></span></div><div class="icpic warm"></div></div></div>
             <div class="icfloat f5" style="--d:.63s; left:465px; top:26px;"><div class="icard" style="width:150px; height:100px;"><div class="ichead"><span class="icfav"></span><span class="ictitle" style="width:60%"></span></div><div class="icline" style="width:78%"></div><div class="icline" style="width:56%"></div></div></div>
           </div>
+          </div>
+        </div>
+        <div class="introLayer" id="introFg">
+          <div class="fgcard g1"><div class="icard" style="width:340px; height:220px;"><div class="ichead"><span class="icfav"></span><span class="ictitle" style="width:55%"></span></div><div class="icline" style="width:80%"></div><div class="icline" style="width:62%"></div></div></div>
+          <div class="fgcard g2"><div class="icard" style="width:300px; height:200px;"><div class="ichead"><span class="icfav hot"></span><span class="ictitle" style="width:48%"></span></div><div class="icpic"></div></div></div>
         </div>
         <div class="introLayer" id="introText">
           <div id="introGlow"></div>
           <div id="introEyebrow">welcome to</div>
-          <div id="introWordmark"><span class="wmark">◍</span><span class="wl">D</span><span class="wl">R</span><span class="wl">I</span><span class="wl">F</span><span class="wl">T</span></div>
+          <div id="introWordmark"><span class="wmark"><span class="wmspin">◍</span></span><span class="wl">D</span><span class="wl">R</span><span class="wl">I</span><span class="wl">F</span><span class="wl">T</span></div>
           <div id="introTag">Tabs are a list. <b>Your web is a place.</b></div>
           <div id="introSub">Every page is a card on an infinite canvas — pan it, zoom it, and connect your browsing into a map you can actually see.</div>
           <div class="introBtns">
@@ -137,6 +143,7 @@
           </div>
           <div id="introHint">takes about a minute &nbsp;·&nbsp; <kbd>esc</kbd> to skip</div>
         </div>
+        <button id="introMute" title="Intro sound on/off">🔊</button>
         <div id="introNoise"></div>
       </div>
       <div id="tourSpot"></div>
