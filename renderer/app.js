@@ -1640,13 +1640,17 @@ function wireGlobalInput() {
   window.addEventListener('keydown', e => {
     if (e.target.tagName === 'INPUT') return
     if (tourOpen) {
+      // A focused tour button already fires its click on Enter — don't also
+      // run the key logic here, or Enter double-fires (skips a step / flips
+      // the mute toggle while advancing). Arrow keys never click a button.
+      const enterOnBtn = e.key === 'Enter' && e.target.tagName === 'BUTTON'
       if (tourPhase === 'intro') {
         if (e.key === 'Escape') endTour()
-        else if (e.key === 'Enter' || e.key === 'ArrowRight') beginTourSteps()
+        else if (!enterOnBtn && (e.key === 'Enter' || e.key === 'ArrowRight')) beginTourSteps()
         return
       }
       if (e.key === 'Escape') endTour()
-      else if (e.key === 'Enter' || e.key === 'ArrowRight') nextTour()
+      else if (!enterOnBtn && (e.key === 'Enter' || e.key === 'ArrowRight')) nextTour()
       else if (e.key === 'ArrowLeft') prevTour()
       return
     }
@@ -1702,8 +1706,13 @@ function wireGlobalInput() {
   window.addEventListener('resize', () => {
     if (tourOpen && tourPhase === 'intro') {
       introFitStage()
-      // Repaint the starfield for the new size, at most a few times a second.
+      // Repaint the starfield for the new size, at most a few times a second,
+      // plus one trailing repaint so the final drag frame isn't left stretched.
       if (Date.now() - starfieldStamp > 300) buildIntroArt()
+      clearTimeout(starfieldResizeT)
+      starfieldResizeT = setTimeout(() => {
+        if (tourOpen && tourPhase === 'intro') buildIntroArt()
+      }, 220)
     }
   })
 
@@ -3189,9 +3198,15 @@ function endTour() {
   introLeave()
   stopIntroSound(0.5)
   clearTimeout(introHideT)
+  clearTimeout(starfieldResizeT)
   introEl.classList.add('hidden')
   introEl.classList.remove('leaving', 'play')
   tourEl.classList.add('hidden')
+  // Release the full-res starfield bitmap (~20MB at retina); it re-renders on
+  // replay via buildIntroArt(). The small orb textures stay cached.
+  const stars = $('#introStars')
+  if (stars) { stars.width = stars.height = 1 }
+  starfieldStamp = 0
   try { localStorage.setItem('drift-tour-done', '1') } catch {}
   scheduleLayout()
 }
@@ -3602,6 +3617,7 @@ function planetTexture(sz, pal) {
 
 let introArtBuilt = false
 let starfieldStamp = 0
+let starfieldResizeT = 0
 
 function buildIntroArt() {
   const stars = $('#introStars')
