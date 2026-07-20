@@ -61,6 +61,19 @@ function sendUI(channel, payload) {
 function wireView(id, view) {
   const wc = view.webContents
   const emit = (type, payload = {}) => sendUI('view:event', { id, type, ...payload })
+
+  // If this view's webContents is destroyed out-of-band — an extension closing
+  // its tab, an OAuth popup finishing (Google sign-in), a render-process kill —
+  // drop it from `views` and detach it. Otherwise the layout/prezoom/raise loops
+  // later dereference a view whose `.webContents` is now undefined and throw
+  // ("Cannot read properties of undefined (reading 'isFocused')").
+  wc.once('destroyed', () => {
+    const m = views.get(id)
+    if (m && m.attached && win && !win.isDestroyed()) { try { win.contentView.removeChildView(m.view) } catch {} }
+    views.delete(id)
+    if (topViewId === id) topViewId = null
+    if (selectedExtWc === wc) selectedExtWc = null
+  })
   const navState = () => {
     const h = wc.navigationHistory
     return { canGoBack: h.canGoBack(), canGoForward: h.canGoForward() }
@@ -126,13 +139,15 @@ function createView(id, url, opts = {}) {
 function destroyView(id) {
   const m = views.get(id)
   if (!m) return
+  const wc = m.view.webContents
   // Same keyboard-theft guard as the layout detach: a focused page must hand
-  // the keyboard back to the canvas before it disappears.
-  const focused = !m.view.webContents.isDestroyed() && m.view.webContents.isFocused()
-  if (m.attached && win && !win.isDestroyed()) win.contentView.removeChildView(m.view)
+  // the keyboard back to the canvas before it disappears. wc may already be gone
+  // (destroyed out-of-band, entry not yet reaped) — stay undefined-safe.
+  const focused = wc && !wc.isDestroyed() && wc.isFocused()
+  if (m.attached && win && !win.isDestroyed()) { try { win.contentView.removeChildView(m.view) } catch {} }
   if (topViewId === id) topViewId = null
-  if (selectedExtWc === m.view.webContents) selectedExtWc = null
-  m.view.webContents.close()
+  if (selectedExtWc === wc) selectedExtWc = null
+  if (wc && !wc.isDestroyed()) wc.close()
   views.delete(id)
   if (focused && win && !win.isDestroyed()) win.webContents.focus()
 }
@@ -184,6 +199,8 @@ ipcMain.on('view:layout', (e, { zoom, items }) => {
   for (const it of items) {
     const m = views.get(it.id)
     if (!m) continue
+    const wc = m.view.webContents
+    if (!wc || wc.isDestroyed()) continue // torn down mid-frame; the detach loop cleans it up
     seen.add(it.id)
     if (!m.attached) { win.contentView.addChildView(m.view); m.attached = true; topViewId = it.id; attachedAny = true }
     // setBounds forces a compositor re-commit even for identical values, which
@@ -202,7 +219,7 @@ ipcMain.on('view:layout', (e, { zoom, items }) => {
     // Content zoom must track the scaled bounds every frame, or pages look
     // mis-scaled mid-animation (focus in/out, pinch).
     if (m.zoom === null || Math.abs(m.zoom - z) > 0.001) {
-      m.view.webContents.setZoomFactor(z)
+      wc.setZoomFactor(z)
       m.zoom = z
     }
   }
@@ -210,9 +227,12 @@ ipcMain.on('view:layout', (e, { zoom, items }) => {
     if (!seen.has(id) && m.attached) {
       // A page that keeps keyboard focus while hidden swallows every keystroke
       // (Escape "dies" after panning away from a focused page) — hand the
-      // keyboard back to the canvas before hiding it.
-      const focused = m.view.webContents.isFocused()
-      win.contentView.removeChildView(m.view)
+      // keyboard back to the canvas before hiding it. Guard the webContents: it
+      // can be undefined if the view was destroyed out-of-band and this layout
+      // pass raced the 'destroyed' cleanup above.
+      const wc = m.view.webContents
+      const focused = wc && !wc.isDestroyed() && wc.isFocused()
+      try { win.contentView.removeChildView(m.view) } catch {}
       m.attached = false
       if (focused) win.webContents.focus()
     }
@@ -229,6 +249,8 @@ ipcMain.on('view:raise', (e, id) => {
   if (!fromCanvas(e)) return
   const m = views.get(id)
   if (!m) return
+  const wc = m.view.webContents
+  if (!wc || wc.isDestroyed()) return // view torn down; nothing to raise
   // Re-adding an attached view bumps it to the top of the stack.
   if (m.attached && win && !win.isDestroyed() && topViewId !== id) {
     win.contentView.addChildView(m.view)
@@ -236,7 +258,7 @@ ipcMain.on('view:raise', (e, id) => {
     if (ai) ai.ensureOnTop() // the AI dock stays above raised pages
   }
   // Tell the extension system this is the active tab, so its action icons update.
-  selectExtTab(m.view.webContents)
+  selectExtTab(wc)
 })
 
 // A zoom animation is about to land at a known final zoom: apply the zoom
@@ -248,9 +270,10 @@ ipcMain.on('view:prezoom', (e, { id, zoom }) => {
   const z = clampZoom(Number(zoom) || 1)
   const targets = id === '*' ? [...views.values()] : views.has(id) ? [views.get(id)] : []
   for (const m of targets) {
-    if (m.view.webContents.isDestroyed()) continue
+    const wc = m.view.webContents
+    if (!wc || wc.isDestroyed()) continue
     if (m.zoom === null || Math.abs(m.zoom - z) > 0.001) {
-      m.view.webContents.setZoomFactor(z)
+      wc.setZoomFactor(z)
       m.zoom = z
     }
   }
@@ -571,7 +594,8 @@ function selectExtTab(wc) {
 // than whichever card is active.
 ipcMain.handle('ext:tabId', (_e, { id }) => {
   const m = views.get(id)
-  return m && !m.view.webContents.isDestroyed() ? m.view.webContents.id : null
+  const wc = m && m.view.webContents
+  return wc && !wc.isDestroyed() ? wc.id : null
 })
 
 ipcMain.handle('ext:isReady', () => !!extensions)
