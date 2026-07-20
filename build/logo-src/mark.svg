@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 120 120">
+  <defs>
+    <linearGradient id="driftT" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity=".95"/>
+    </linearGradient>
+  </defs>
+  <ellipse cx="60" cy="62" rx="46" ry="20" transform="rotate(-24 60 62)"
+           fill="none" stroke="#ffffff" stroke-width="4" opacity=".55"/>
+  <path d="M 68 42 A 42 20 -24 0 1 90 34" fill="none"
+        stroke="url(#driftT)" stroke-width="5.5" stroke-linecap="round"/>
+  <circle cx="60" cy="62" r="15" fill="#ffffff"/>
+  <circle cx="92" cy="33" r="9" fill="#ffffff"/>
+</svg>

@@ -510,7 +510,7 @@ body.nobg #bgimg { display: none; }
   width: auto;
   flex: none;
   opacity: 0.95;
-  filter: drop-shadow(0 0 6px rgba(255, 200, 160, 0.35));
+  filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.3));
 }
 
 #toolbar button {
