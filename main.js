@@ -98,9 +98,26 @@ function wireView(id, view) {
   wc.on('media-started-playing', () => emit('media', { playing: true }))
   wc.on('media-paused', () => emit('media', { playing: false }))
 
-  // Links that want a new window/tab become child cards with a trail edge instead.
-  wc.setWindowOpenHandler(({ url }) => {
-    if (safeUrl(url)) emit('spawn', { url })
+  // Links that want a new window/tab become child cards with a trail edge.
+  // BUT a real popup (window.open with features) — an OAuth / "Continue with
+  // Google" sign-in — needs a genuine window with a working window.opener so it
+  // can postMessage the result back; a disconnected card can't, and Google logs
+  // "Failed to open popup window" and the login errors out. Let popups open as a
+  // transient child window; ordinary link/new-tab opens still become cards.
+  wc.setWindowOpenHandler((details) => {
+    if (details.disposition === 'new-window') {
+      if (!safeUrl(details.url)) return { action: 'deny' }
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          width: 500, height: 650, resizable: true, minimizable: false, fullscreenable: false,
+          title: 'Sign in',
+          parent: win && !win.isDestroyed() ? win : undefined,
+          webPreferences: { sandbox: true, partition: 'persist:drift' }
+        }
+      }
+    }
+    if (safeUrl(details.url)) emit('spawn', { url: details.url })
     return { action: 'deny' }
   })
 
