@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened runtime entitlements for Drift (required for Apple notarization).
+
+  Chromium and the Widevine CDM cannot run under the hardened runtime without
+  these four. Removing any of them produces a build that notarizes but then
+  crashes or silently loses DRM playback:
+
+  - allow-jit / allow-unsigned-executable-memory: V8 compiles JavaScript to
+    executable memory at runtime.
+  - disable-library-validation: the Widevine CDM is a dylib signed by Google,
+    not by us, so library validation would refuse to load it (no Netflix).
+  - allow-dyld-environment-variables: Electron's helper processes rely on dyld
+    environment variables.
+-->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+  <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+  <true/>
+</dict>
+</plist>

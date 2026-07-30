@@ -26,7 +26,8 @@
     "toolsets": {
       "nsis": "1.2.1"
     },
-    "afterPack": "build/adhoc-sign.js",
+    "afterPack": "build/vmp-sign.js",
+    "afterSign": "build/notarize.js",
     "files": [
       "main.js",
       "preload.js",
@@ -59,7 +60,15 @@
         }
       ],
       "icon": "build/icon.icns",
-      "identity": null,
+      "identity": "R47T8JJHYX",
+      "hardenedRuntime": true,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.inherit.plist",
+      "notarize": false,
+      "extendInfo": {
+        "NSCameraUsageDescription": "Drift needs camera access when a site you visit asks to use your camera.",
+        "NSMicrophoneUsageDescription": "Drift needs microphone access when a site you visit asks to use your microphone."
+      },
       "category": "public.app-category.productivity",
       "artifactName": "Drift-mac-${arch}.${ext}"
     },
