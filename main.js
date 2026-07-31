@@ -707,8 +707,20 @@ function isNewerVersion(a, b) { // a > b, "x.y.z"
   return false
 }
 
+// A packaged, Developer-ID-signed build can update itself (Squirrel refuses
+// unsigned updates, which is why this only became possible once notarization
+// landed). Anything else — a dev run from source — falls back to the old
+// "a new version is out, go download it" pill.
 function checkForUpdates() {
   if (SELFTEST || PROMO) return
+  if (app.isPackaged && !process.env.DRIFT_UPDATE_LEGACY) startAutoUpdate()
+  else legacyUpdateNotice()
+}
+
+let noticeShown = false // the fallback pill must never stack up
+function legacyUpdateNotice() {
+  if (noticeShown) return
+  noticeShown = true
   const force = process.env.DRIFT_UPDATE_TEST === '1'
   setTimeout(async () => {
     try {
@@ -719,13 +731,61 @@ function checkForUpdates() {
       const rel = await res.json()
       const latest = String(rel.tag_name || '').replace(/^v/, '')
       if (force || (latest && isNewerVersion(latest, app.getVersion()))) {
-        sendUI('update:available', { version: latest || app.getVersion() })
+        sendUI('update:available', { version: latest || app.getVersion(), manual: true })
       }
     } catch {} // offline is fine — try again next launch
   }, force ? 1500 : 6000)
 }
 
+let updater = null
+function startAutoUpdate() {
+  try {
+    updater = require('electron-updater').autoUpdater
+  } catch {
+    legacyUpdateNotice() // module missing: still tell people an update exists
+    return
+  }
+  updater.autoDownload = true
+  // Installing on quit means someone who never clicks the pill still ends up on
+  // the current version the next time they quit and reopen.
+  updater.autoInstallOnAppQuit = true
+  // Silent in normal use; chatty when pointed at a test feed so an update cycle
+  // can actually be watched end to end.
+  updater.logger = process.env.DRIFT_UPDATE_FEED ? console : null
+  // Test hook: point a packaged build at a local feed instead of GitHub so the
+  // whole download+install cycle can be exercised without publishing a release.
+  if (process.env.DRIFT_UPDATE_FEED) {
+    updater.setFeedURL({ provider: 'generic', url: process.env.DRIFT_UPDATE_FEED })
+    updater.forceDevUpdateConfig = true
+  }
+
+  updater.on('update-available', info => {
+    // Say so while it downloads rather than pulling ~100MB silently.
+    sendUI('update:available', { version: info && info.version, downloading: true })
+  })
+  updater.on('update-downloaded', info => {
+    sendUI('update:ready', { version: info && info.version })
+  })
+  // Never let an update problem surface as a crash or a dead-end: fall back to
+  // the manual notice so the user can still get the new version themselves.
+  updater.on('error', () => legacyUpdateNotice())
+
+  setTimeout(() => {
+    try { updater.checkForUpdates().catch(() => legacyUpdateNotice()) }
+    catch { legacyUpdateNotice() }
+  }, process.env.DRIFT_UPDATE_FEED ? 1500 : 6000)
+}
+
 ipcMain.handle('update:open', () => shell.openExternal(DOWNLOAD_PAGE))
+
+// Clicked "restart to update". quitAndInstall replaces the app bundle and
+// relaunches; if it somehow fails, send them to the download page instead of
+// leaving the click doing nothing.
+ipcMain.handle('update:install', () => {
+  if (!updater) return shell.openExternal(DOWNLOAD_PAGE)
+  try { setImmediate(() => updater.quitAndInstall(false, true)) }
+  catch { shell.openExternal(DOWNLOAD_PAGE) }
+})
 
 // Promo shots only: strip consent/cookie overlays from the staged pages so
 // captures show content, not banners. Registered exclusively in --promoshot
