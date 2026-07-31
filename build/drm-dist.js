@@ -118,4 +118,19 @@ for (const arch of ARCHES) {
   stashManifest(arch)
 }
 mergeManifests()
+
+// Auto-update is only real if the update artifacts actually reach the release.
+// A release with just the DMGs leaves every installed copy checking a manifest
+// that 404s, silently, forever — so print the exact command with every required
+// asset rather than trusting memory at ship time.
+const version = require('../package.json').version
+const assets = [
+  'dist/Drift-mac-arm64.dmg', 'dist/Drift-mac-x64.dmg',
+  'dist/Drift-mac-arm64.zip', 'dist/Drift-mac-x64.zip',
+  'dist/latest-mac.yml'
+]
+const missing = assets.filter(a => !fs.existsSync(a))
+if (missing.length) throw new Error('missing release artifacts: ' + missing.join(', '))
 console.log('[drm-dist] done → both DMGs (signed, notarized, stapled) + both zips + latest-mac.yml')
+console.log('\n[drm-dist] RELEASE WITH ALL OF THESE (latest-mac.yml + zips are what make auto-update work):\n')
+console.log(`  gh release create v${version} --repo BradB808/Drift-Browser-download-page \\\n    --title "…" --notes "…" \\\n    ${assets.join(' ')}\n`)

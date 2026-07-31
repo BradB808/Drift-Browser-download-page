@@ -737,8 +737,24 @@ function legacyUpdateNotice() {
   }, force ? 1500 : 6000)
 }
 
+// Squirrel swaps the whole .app bundle, so the folder holding it has to be
+// writable by this user. An app installed by an admin, or launched straight from
+// the DMG or a Gatekeeper translocation, can never self-update — better to tell
+// people to download it than to hand them a button that silently does nothing.
+function bundleIsReplaceable() {
+  try {
+    if (/AppTranslocation/.test(process.execPath)) return false
+    const appRoot = path.join(process.execPath, '..', '..', '..') // …/Drift.app
+    if (!appRoot.endsWith('.app')) return false
+    fs.accessSync(path.dirname(appRoot), fs.constants.W_OK)
+    return true
+  } catch { return false }
+}
+
 let updater = null
+let stagedVersion = null // the version Squirrel has actually staged
 function startAutoUpdate() {
+  if (!bundleIsReplaceable()) { legacyUpdateNotice(); return }
   try {
     updater = require('electron-updater').autoUpdater
   } catch {
@@ -749,26 +765,55 @@ function startAutoUpdate() {
   // Installing on quit means someone who never clicks the pill still ends up on
   // the current version the next time they quit and reopen.
   updater.autoInstallOnAppQuit = true
+  // electron-updater otherwise mints a persistent per-install UUID and sends it
+  // as x-user-staging-id on every check. Drift ships no telemetry, so pin it to
+  // a constant and the request carries nothing that identifies the machine.
+  updater.requestHeaders = { 'x-user-staging-id': '00000000-0000-0000-0000-000000000000' }
   // Silent in normal use; chatty when pointed at a test feed so an update cycle
   // can actually be watched end to end.
   updater.logger = process.env.DRIFT_UPDATE_FEED ? console : null
-  // Test hook: point a packaged build at a local feed instead of GitHub so the
-  // whole download+install cycle can be exercised without publishing a release.
+  // Test hook: point a build at a local feed so the whole download+install cycle
+  // can be exercised without publishing a release. Loopback only — a shipped
+  // build must not be repointable at an arbitrary host by anything that can set
+  // an environment variable.
   if (process.env.DRIFT_UPDATE_FEED) {
-    updater.setFeedURL({ provider: 'generic', url: process.env.DRIFT_UPDATE_FEED })
-    updater.forceDevUpdateConfig = true
+    let loopback = false
+    try {
+      const u = new URL(process.env.DRIFT_UPDATE_FEED)
+      loopback = ['127.0.0.1', 'localhost', '[::1]', '::1'].includes(u.hostname)
+    } catch {}
+    if (loopback) {
+      updater.setFeedURL({ provider: 'generic', url: process.env.DRIFT_UPDATE_FEED })
+      updater.forceDevUpdateConfig = true
+    }
   }
 
+  let offered = null // version we told the user about, so a failure can un-stick the pill
   updater.on('update-available', info => {
     // Say so while it downloads rather than pulling ~100MB silently.
-    sendUI('update:available', { version: info && info.version, downloading: true })
+    offered = (info && info.version) || offered
+    sendUI('update:available', { version: offered, downloading: true })
   })
-  updater.on('update-downloaded', info => {
-    sendUI('update:ready', { version: info && info.version })
+  // NOTE: electron-updater fires its own 'update-downloaded' as soon as its
+  // local proxy starts listening — Squirrel has not unpacked or signature-checked
+  // anything yet, and quitAndInstall at that point is a silent no-op. Only the
+  // NATIVE Squirrel event means "staged and installable", so the pill waits for
+  // that; otherwise the button looks broken and then quits the app out of
+  // nowhere minutes later.
+  updater.on('update-downloaded', info => { stagedVersion = (info && info.version) || stagedVersion })
+  try {
+    require('electron').autoUpdater.on('update-downloaded', () => {
+      sendUI('update:ready', { version: stagedVersion })
+    })
+  } catch { /* no native updater (unsigned/dev): the quit-path still installs */ }
+  // Never let an update problem surface as a crash or a dead-end. If we already
+  // said "downloading…", flip that straight to an actionable "get the update"
+  // rather than leaving it spinning for the rest of the session — the manual
+  // notice below can't be relied on to do it, since it needs its own network call.
+  updater.on('error', () => {
+    if (offered) sendUI('update:available', { version: offered, manual: true })
+    legacyUpdateNotice()
   })
-  // Never let an update problem surface as a crash or a dead-end: fall back to
-  // the manual notice so the user can still get the new version themselves.
-  updater.on('error', () => legacyUpdateNotice())
 
   setTimeout(() => {
     try { updater.checkForUpdates().catch(() => legacyUpdateNotice()) }
@@ -778,13 +823,23 @@ function startAutoUpdate() {
 
 ipcMain.handle('update:open', () => shell.openExternal(DOWNLOAD_PAGE))
 
-// Clicked "restart to update". quitAndInstall replaces the app bundle and
-// relaunches; if it somehow fails, send them to the download page instead of
-// leaving the click doing nothing.
+// Clicked "restart to update". The pill only offers this once Squirrel has
+// staged the update, so quitAndInstall should replace the bundle and relaunch
+// immediately. If the app somehow hasn't begun quitting, put the pill back and
+// send them to the download page rather than leaving a dead button.
 ipcMain.handle('update:install', () => {
   if (!updater) return shell.openExternal(DOWNLOAD_PAGE)
-  try { setImmediate(() => updater.quitAndInstall(false, true)) }
-  catch { shell.openExternal(DOWNLOAD_PAGE) }
+  const giveUp = setTimeout(() => {
+    sendUI('update:available', { version: stagedVersion, manual: true })
+    shell.openExternal(DOWNLOAD_PAGE)
+  }, 20000)
+  app.once('before-quit', () => clearTimeout(giveUp))
+  // The call must be deferred so this IPC can return, which also means the
+  // try/catch has to live inside the callback to catch anything at all.
+  setImmediate(() => {
+    try { updater.quitAndInstall(false, true) }
+    catch { clearTimeout(giveUp); shell.openExternal(DOWNLOAD_PAGE) }
+  })
 })
 
 // Promo shots only: strip consent/cookie overlays from the staged pages so
