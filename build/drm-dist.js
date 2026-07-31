@@ -78,11 +78,59 @@ function notarizeDmg(dmg) {
   execFileSync('spctl', ['-a', '-vvv', '-t', 'install', dmg], { stdio: 'inherit' })
 }
 
+// Auto-update manifest. Each arch is a separate electron-builder run, and every
+// run writes its own dist/latest-mac.yml — so the second would clobber the
+// first and half the users would be offered the wrong architecture. Keep each
+// arch's copy, then merge them into one manifest listing both zips.
+// electron-updater picks the right one by looking for "arm64" in the filename.
+function stashManifest(arch) {
+  const src = path.join('dist', 'latest-mac.yml')
+  if (!fs.existsSync(src)) throw new Error(`electron-builder produced no latest-mac.yml for ${arch} — auto-update would break`)
+  fs.copyFileSync(src, path.join('dist', `latest-mac-${arch}.yml`))
+}
+
+function mergeManifests() {
+  const yaml = require('js-yaml')
+  const docs = ARCHES.map(a => yaml.load(fs.readFileSync(path.join('dist', `latest-mac-${a}.yml`), 'utf8')))
+  const merged = { ...docs[0] }
+  // Only .zip entries: Squirrel.Mac updates from a zip, and leaving the .dmg in
+  // the list risks the updater picking a file it cannot install.
+  merged.files = docs.flatMap(d => (d.files || []).filter(f => String(f.url).endsWith('.zip')))
+  if (!merged.files.length) throw new Error('merged latest-mac.yml has no zip entries — auto-update would break')
+  const arm = merged.files.find(f => String(f.url).includes('arm64'))
+  const intel = merged.files.find(f => !String(f.url).includes('arm64'))
+  if (!arm || !intel) throw new Error('merged latest-mac.yml is missing an architecture — auto-update would break')
+  merged.path = arm.url
+  merged.sha512 = arm.sha512
+  fs.writeFileSync(path.join('dist', 'latest-mac.yml'), yaml.dump(merged))
+  for (const a of ARCHES) fs.rmSync(path.join('dist', `latest-mac-${a}.yml`), { force: true })
+  console.log(`[drm-dist] merged update manifest → ${merged.files.map(f => f.url).join(', ')}`)
+}
+
 for (const arch of ARCHES) {
   const dist = ensureDist(arch)
-  console.log(`[drm-dist] building ${arch} DMG (electronDist=${dist}) …`)
-  execFileSync('npx', ['electron-builder', '--mac', 'dmg', `--${arch}`, `-c.electronDist=${dist}`],
-    { stdio: 'inherit' })
+  console.log(`[drm-dist] building ${arch} DMG + zip (electronDist=${dist}) …`)
+  // --publish never: the manifest is generated locally, assets are uploaded by
+  // `gh release create` so the release notes stay hand-written.
+  execFileSync('npx', ['electron-builder', '--mac', 'dmg', 'zip', `--${arch}`,
+    `-c.electronDist=${dist}`, '--publish', 'never'], { stdio: 'inherit' })
   notarizeDmg(path.join('dist', `Drift-mac-${arch}.dmg`))
+  stashManifest(arch)
 }
-console.log('[drm-dist] done → dist/Drift-mac-arm64.dmg + dist/Drift-mac-x64.dmg (signed, notarized, stapled)')
+mergeManifests()
+
+// Auto-update is only real if the update artifacts actually reach the release.
+// A release with just the DMGs leaves every installed copy checking a manifest
+// that 404s, silently, forever — so print the exact command with every required
+// asset rather than trusting memory at ship time.
+const version = require('../package.json').version
+const assets = [
+  'dist/Drift-mac-arm64.dmg', 'dist/Drift-mac-x64.dmg',
+  'dist/Drift-mac-arm64.zip', 'dist/Drift-mac-x64.zip',
+  'dist/latest-mac.yml'
+]
+const missing = assets.filter(a => !fs.existsSync(a))
+if (missing.length) throw new Error('missing release artifacts: ' + missing.join(', '))
+console.log('[drm-dist] done → both DMGs (signed, notarized, stapled) + both zips + latest-mac.yml')
+console.log('\n[drm-dist] RELEASE WITH ALL OF THESE (latest-mac.yml + zips are what make auto-update work):\n')
+console.log(`  gh release create v${version} --repo BradB808/Drift-Browser-download-page \\\n    --title "…" --notes "…" \\\n    ${assets.join(' ')}\n`)

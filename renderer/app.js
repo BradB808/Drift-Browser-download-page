@@ -1681,7 +1681,10 @@ function wireGlobalInput() {
     $('#btnVault').addEventListener('click', () => { vaultOpen ? closeVaultPanel() : openVaultPanel() })
   }
   $('#btnFullExit').addEventListener('click', exitFullscreen)
-  $('#btnUpdate').addEventListener('click', () => drift.openDownloadPage())
+  $('#btnUpdate').addEventListener('click', () => {
+    if (updateAction === 'install') drift.installUpdate()
+    else drift.openDownloadPage()
+  })
   $('#btnUpdateDismiss').addEventListener('click', () => $('#updateG').classList.add('hidden'))
   $('#btnFullUrl').addEventListener('click', () => {
     const c = fullId && cards.get(fullId)
@@ -2729,8 +2732,23 @@ function jumpToCard(c) {
 
 // ---------- shortcuts from the app menu / page views ----------
 
-drift.onUpdateAvailable(({ version }) => {
-  $('#btnUpdate').textContent = `⬇ Drift ${version} is out — get the update`
+// The update pill has two jobs. While a self-update downloads it just reports
+// what's happening; once the update is staged, clicking it restarts into the
+// new version. On a dev build (or if self-update failed) it falls back to
+// sending the user to the download page.
+let updateAction = 'download' // 'download' = open the site, 'install' = restart
+
+drift.onUpdateAvailable(({ version, downloading }) => {
+  updateAction = 'download'
+  $('#btnUpdate').textContent = downloading
+    ? `⬇ Drift ${version} downloading…`
+    : `⬇ Drift ${version} is out — get the update`
+  $('#updateG').classList.remove('hidden')
+})
+
+drift.onUpdateReady(({ version }) => {
+  updateAction = 'install'
+  $('#btnUpdate').textContent = `✓ Drift ${version} ready — restart to update`
   $('#updateG').classList.remove('hidden')
 })
 
