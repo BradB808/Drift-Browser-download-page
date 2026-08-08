@@ -1,0 +1,570 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Code + a Real Browser: Drift's MCP Connector</title>
+<meta name="description" content="Drift is a free spatial browser for Mac with a built-in MCP server. Connect Claude Code with one command and let it read and act on the pages you already have open — all on your own machine.">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Drift Browser">
+<meta property="og:title" content="Claude Code + a Real Browser: Drift's MCP Connector">
+<meta property="og:description" content="Drift is a free spatial browser for Mac with a built-in MCP server. Connect Claude Code with one command and let it read and act on the pages you already have open — all on your own machine.">
+<meta property="og:url" content="https://driftwebbrowser.com/claude-code-mcp/">
+<meta property="og:image" content="https://driftwebbrowser.com/assets/ai-connections.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Claude Code + a Real Browser: Drift's MCP Connector">
+<meta name="twitter:description" content="Drift is a free spatial browser for Mac with a built-in MCP server. Connect Claude Code with one command and let it read and act on the pages you already have open — all on your own machine.">
+<meta name="twitter:image" content="https://driftwebbrowser.com/assets/ai-connections.jpg">
+<link rel="canonical" href="https://driftwebbrowser.com/claude-code-mcp/">
+<link rel="icon" href="../assets/icon.png">
+<link rel="apple-touch-icon" href="../assets/icon.png">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "headline": "Claude Code + a Real Browser: Drift's MCP Connector",
+  "description": "Drift is a free spatial browser for Mac with a built-in MCP server. Connect Claude Code with one command and let it read and act on the pages you already have open — all on your own machine.",
+  "datePublished": "2026-08-08",
+  "dateModified": "2026-08-08",
+  "image": "https://driftwebbrowser.com/assets/ai-connections.jpg",
+  "mainEntityOfPage": "https://driftwebbrowser.com/claude-code-mcp/",
+  "publisher": { "@type": "Organization", "name": "Drift Browser", "url": "https://driftwebbrowser.com/" }
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    { "@type": "Question", "name": "What is an MCP server?", "acceptedAnswer": { "@type": "Answer", "text": "MCP, the Model Context Protocol, is an open standard for giving an AI assistant tools it can call. An MCP server is simply a program that answers those calls. Drift's is built into the browser and runs on your own Mac, so there is nothing to host and nothing to pay for." } },
+    { "@type": "Question", "name": "Does the Drift MCP connector cost anything or need a server?", "acceptedAnswer": { "@type": "Answer", "text": "No. The connector runs inside Drift on your own machine and listens only on 127.0.0.1. There is no hosting, no account, and no subscription. It is part of Drift, which is free and open source." } },
+    { "@type": "Question", "name": "How is this different from a headless browser MCP?", "acceptedAnswer": { "@type": "Answer", "text": "A headless browser MCP launches its own empty browser and fetches a URL from scratch, logged out. Drift's connector works on the pages already open in front of you, in your real signed-in session, so the agent sees the same dashboard, inbox, or admin panel that you see." } },
+    { "@type": "Question", "name": "Can Claude Code click things without asking?", "acceptedAnswer": { "@type": "Answer", "text": "No. Reading is free, but clicking and typing ask your permission the first time on each site, and you can revoke a standing grant at any time. Password, payment-card, and file-upload fields are refused outright, even on a site you have allowed." } },
+    { "@type": "Question", "name": "Does it work with MCP clients other than Claude Code?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. The connector speaks standard MCP over streamable HTTP, so any client that can point at an HTTP MCP endpoint with a bearer token can drive Drift." } }
+  ]
+}
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #1b1b1f;
+    --gray: #585866;
+    --faint: #f4f4f6;
+    --line: #1b1b1f;
+    --orange: #ff5c0a;
+    --orange2: #ff2e63;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: #ffffff;
+    color: var(--ink);
+    font-family: "Poppins", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+  .serif { font-family: "Fraunces", Georgia, serif; }
+  .wrap { max-width: 1240px; margin: 0 auto; padding: 0 clamp(20px, 4vw, 56px); }
+
+  /* ---------- nav ---------- */
+  nav {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: rgba(255, 255, 255, 0.92);
+    backdrop-filter: blur(14px);
+    border-bottom: 1px solid rgba(27, 27, 31, 0.08);
+  }
+  nav .row { display: flex; align-items: center; gap: 26px; height: 72px; }
+  .brand { display: flex; align-items: center; gap: 11px; font-weight: 700; letter-spacing: 0.14em; font-size: 15px; color: var(--ink); text-decoration: none; }
+  .brand img { height: 34px; border-radius: 8px; }
+  nav .links { margin-left: auto; display: flex; gap: 26px; align-items: center; }
+  nav .links a { color: var(--ink); text-decoration: none; font-size: 14.5px; font-weight: 500; }
+  nav .links a:hover { color: var(--orange); }
+  /* Liquid glass CTA, matching Drift's in-app toolbar */
+  .pill {
+    position: relative;
+    overflow: hidden;
+    display: inline-block;
+    background: linear-gradient(135deg,
+      rgba(44, 37, 52, 0.94) 0%,
+      rgba(23, 19, 29, 0.9) 45%,
+      rgba(40, 31, 46, 0.92) 100%);
+    color: #fff !important;
+    font-weight: 600;
+    padding: 11px 24px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    box-shadow: 0 10px 26px rgba(27, 27, 31, 0.28),
+      inset 0 1px 0 rgba(255, 255, 255, 0.35),
+      inset 0 -1px 1px rgba(255, 255, 255, 0.08);
+    text-decoration: none;
+    transition: transform 0.12s ease, box-shadow 0.15s ease, filter 0.15s ease;
+  }
+  .pill::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: radial-gradient(130% 70% at 22% -20%, rgba(255, 255, 255, 0.35), transparent 55%);
+    pointer-events: none;
+  }
+  .pill:hover {
+    transform: translateY(-1px);
+    filter: brightness(1.15);
+    box-shadow: 0 14px 34px rgba(27, 27, 31, 0.36),
+      inset 0 1px 0 rgba(255, 255, 255, 0.4),
+      inset 0 -1px 1px rgba(255, 255, 255, 0.08);
+    color: #fff;
+  }
+  .btn-main {
+    position: relative;
+    overflow: hidden;
+    display: inline-block;
+    background: linear-gradient(135deg,
+      rgba(44, 37, 52, 0.95) 0%,
+      rgba(23, 19, 29, 0.92) 45%,
+      rgba(40, 31, 46, 0.94) 100%);
+    color: #fff;
+    font-weight: 600;
+    font-size: 18px;
+    padding: 17px 36px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    text-decoration: none;
+    transition: transform 0.12s ease, box-shadow 0.15s ease, filter 0.15s ease;
+    box-shadow: 0 14px 36px rgba(27, 27, 31, 0.3),
+      inset 0 1.5px 0 rgba(255, 255, 255, 0.38),
+      inset 0 -1px 1px rgba(255, 255, 255, 0.08);
+  }
+  .btn-main::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: radial-gradient(130% 70% at 22% -20%, rgba(255, 255, 255, 0.32), transparent 55%);
+    pointer-events: none;
+  }
+  .btn-main:hover {
+    transform: translateY(-2px);
+    filter: brightness(1.15);
+    box-shadow: 0 20px 46px rgba(27, 27, 31, 0.38),
+      inset 0 1.5px 0 rgba(255, 255, 255, 0.42),
+      inset 0 -1px 1px rgba(255, 255, 255, 0.08);
+  }
+
+  /* ---------- article header ---------- */
+  header.top { padding: clamp(44px, 6vw, 84px) 0 clamp(10px, 2vw, 24px); }
+  .eyebrow {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--orange);
+    margin-bottom: 18px;
+  }
+  header.top h1 {
+    font-family: "Fraunces", Georgia, serif;
+    font-weight: 700;
+    font-size: clamp(40px, 6.4vw, 78px);
+    line-height: 1.02;
+    letter-spacing: -0.015em;
+    max-width: 900px;
+  }
+  header.top .sub {
+    margin-top: 26px;
+    font-size: clamp(17px, 2vw, 22px);
+    font-weight: 600;
+    line-height: 1.5;
+    max-width: 760px;
+  }
+  .dateline { margin-top: 16px; font-size: 13.5px; color: var(--gray); }
+
+  /* ---------- screenshot ---------- */
+  .shot { position: relative; padding: clamp(28px, 4vw, 52px) 0 10px; }
+  .shot .frame {
+    border: 1.5px solid var(--ink);
+    border-radius: 24px;
+    overflow: hidden;
+    box-shadow: 0 30px 80px rgba(27, 27, 31, 0.12);
+    background: #0d0b10;
+  }
+  .shot img { width: 100%; display: block; }
+  .shot .cap { margin-top: 14px; font-size: 13.5px; color: var(--gray); text-align: center; }
+
+  /* ---------- article prose ---------- */
+  article { padding: clamp(24px, 3.4vw, 44px) 0 0; }
+  .prose { max-width: 820px; }
+  .prose h2 {
+    font-family: "Fraunces", Georgia, serif;
+    font-weight: 700;
+    font-size: clamp(28px, 3.6vw, 44px);
+    line-height: 1.08;
+    letter-spacing: -0.01em;
+    margin: clamp(38px, 5vw, 60px) 0 16px;
+  }
+  .prose h3 {
+    font-size: 17px;
+    font-weight: 600;
+    margin: 26px 0 8px;
+  }
+  .prose p { font-size: 15.5px; line-height: 1.75; color: #3c3947; margin: 0 0 16px; }
+  .prose a { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; font-weight: 500; }
+  .prose a:hover { color: var(--orange); }
+  .prose ul { margin: 0 0 18px; padding-left: 22px; }
+  .prose li { font-size: 15.5px; line-height: 1.75; color: #3c3947; margin-bottom: 10px; }
+  .prose li::marker { color: var(--orange); }
+  .prose strong { color: var(--ink); }
+  .callout {
+    background: var(--faint);
+    border-radius: 16px;
+    padding: 20px 24px;
+    margin: 0 0 18px;
+  }
+  .callout p { margin: 0; font-size: 14.5px; }
+
+  /* ---------- comparison table ---------- */
+  .table-scroll {
+    border: 1.5px solid var(--ink);
+    border-radius: 24px;
+    overflow-x: auto;
+    margin: 10px 0 20px;
+    max-width: 980px;
+  }
+  table.compare {
+    width: 100%;
+    min-width: 640px;
+    border-collapse: collapse;
+    font-size: 14.5px;
+  }
+  table.compare th, table.compare td {
+    text-align: left;
+    padding: 15px 20px;
+    border-bottom: 1px solid rgba(27, 27, 31, 0.12);
+    vertical-align: top;
+    line-height: 1.6;
+  }
+  table.compare thead th {
+    background: var(--faint);
+    font-weight: 600;
+    font-size: 13.5px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  table.compare tbody tr:last-child th,
+  table.compare tbody tr:last-child td { border-bottom: none; }
+  table.compare tbody th { font-weight: 600; white-space: nowrap; color: var(--ink); }
+  table.compare td { color: #3c3947; }
+
+  /* ---------- CTA ---------- */
+  section.getit { padding: clamp(40px, 5vw, 64px) 0 clamp(60px, 7vw, 100px); }
+  .cta-card {
+    border: 1.5px solid var(--ink);
+    border-radius: 24px;
+    padding: clamp(30px, 5vw, 64px);
+  }
+  .cta-card h2 {
+    font-family: "Fraunces", Georgia, serif;
+    font-weight: 700;
+    font-size: clamp(32px, 4.4vw, 54px);
+    line-height: 1.05;
+  }
+  .cta-card p { margin-top: 16px; font-size: 15.5px; line-height: 1.7; color: var(--gray); max-width: 640px; }
+  .cta-card .cta { margin-top: 30px; }
+  .cta-card .fineprint { margin-top: 20px; font-size: 13px; color: var(--gray); line-height: 1.8; }
+  .cta-card .fineprint a { color: var(--ink); }
+  .cta-card .fineprint a:hover { color: var(--orange); }
+
+  footer {
+    border-top: 1px solid rgba(27, 27, 31, 0.1);
+    padding: 26px 0;
+    color: var(--gray);
+    font-size: 13.5px;
+  }
+  footer .row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  footer a { color: var(--ink); text-decoration: none; font-weight: 500; }
+  footer .right { margin-left: auto; }
+</style>
+<style>
+  /* Page-specific: the terminal chip and the tool table's first column. */
+  .term {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 6px 10px;
+    align-items: start;
+    margin: 22px 0;
+    padding: 14px 16px;
+    border-radius: 16px;
+    background: linear-gradient(135deg, rgba(44,37,52,0.97) 0%, rgba(23,19,29,0.95) 55%, rgba(40,31,46,0.97) 100%);
+    border: 1px solid rgba(255,255,255,0.2);
+    box-shadow: 0 14px 34px rgba(27,27,31,0.22);
+  }
+  .term .prompt { color: #ffb469; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; line-height: 1.6; }
+  .term code {
+    min-width: 0;
+    display: block;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px;
+    line-height: 1.6;
+    color: #f3efeb;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .prose table.compare th[scope="row"] { white-space: normal; }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap row">
+    <a class="brand" href="../"><img src="../assets/icon.png" alt="Drift">DRIFT</a>
+    <div class="links">
+      <a href="../#features">Features</a>
+      <a href="https://github.com/BradB808/Drift-Browser-download-page">GitHub</a>
+      <a class="pill" href="../#download">Get Drift</a>
+    </div>
+  </div>
+</nav>
+
+<header class="top">
+  <div class="wrap">
+    <p class="eyebrow">Guide</p>
+    <h1 class="serif">Give Claude Code a real browser</h1>
+    <p class="sub">Drift is a spatial browser for Mac with an MCP server built in. Connect Claude
+      Code with one command and it can see and act on the pages you already have open — signed in,
+      fully rendered, exactly as they sit on your screen. Nothing is hosted, and nothing leaves
+      your machine.</p>
+    <p class="dateline">Updated August 2026</p>
+  </div>
+</header>
+
+<article>
+  <div class="wrap">
+    <div class="prose">
+
+      <h2 class="serif">The short version</h2>
+      <p><a href="../">Drift</a> is a free, open-source browser for macOS that replaces the tab
+        strip with an infinite canvas of live page cards. Every card is a real Chromium page, so
+        your logins, your video, and your web apps all work normally.</p>
+      <p>Switch on Drift's MCP connector and an AI coding agent — <strong>Claude Code</strong>, or
+        any other client that speaks the Model Context Protocol — can drive that canvas from your
+        terminal. It can list what you have open, read a page, take a screenshot of one, open new
+        pages, and, with your permission, click and type on them.</p>
+      <p>The connector is a small HTTP server that runs <em>inside</em> Drift, on
+        <code>127.0.0.1</code>, protected by a token. It is off until you switch it on.</p>
+
+      <h2 class="serif">Why a browser MCP is different from a headless one</h2>
+      <p>Most browser-automation MCP servers launch their own browser. It starts empty: logged
+        out, no cookies, no extensions, no session. Ask it about your analytics dashboard and it
+        gets a sign-in wall. Ask it about a page behind SSO and it gets nothing at all.</p>
+      <p>Drift's connector does not launch anything. It hands the agent the browser you are
+        already using. That difference shows up immediately:</p>
+      <ul>
+        <li><strong>Signed-in pages just work.</strong> The agent reads your dashboard, your inbox,
+          your admin panel — because it is reading <em>your</em> session, not a fresh anonymous
+          one.</li>
+        <li><strong>It sees the rendered page, not the raw URL.</strong> Single-page apps, content
+          behind a click, anything drawn by JavaScript after load: it is all there, because the
+          page has already finished rendering in front of you.</li>
+        <li><strong>You watch it happen.</strong> When the agent acts on a card, Drift brings that
+          card front and centre. You are not reading a log of what a hidden browser claims it
+          did.</li>
+        <li><strong>Shared context, both directions.</strong> The pages you gathered while
+          researching are the agent's context. The pages it opens land on your canvas, connected
+          by trails.</li>
+      </ul>
+
+      <h2 class="serif">Setting it up</h2>
+      <p>You need <a href="../#download">Drift</a> and Claude Code. Two minutes, start to finish.</p>
+      <ol>
+        <li>In Drift, open the assistant dock, then the <strong>Connections</strong> screen
+          (the gear icon).</li>
+        <li>Find the <strong>Claude Code (MCP)</strong> row and press <strong>Enable</strong>.
+          Drift generates a token and starts listening on port 8787.</li>
+        <li>Press <strong>Copy</strong>. Drift puts the whole command on your clipboard, token
+          and all.</li>
+        <li>Paste it into your terminal:</li>
+      </ol>
+      <div class="term">
+        <span class="prompt" aria-hidden="true">$</span>
+        <code>claude mcp add --transport http drift http://127.0.0.1:8787/mcp --header "Authorization: Bearer &lt;your token&gt;"</code>
+      </div>
+      <p>Check it with <code>claude mcp list</code>. You are looking for
+        <strong>drift: ✔ Connected</strong>. From then on, Claude Code can see your canvas in any
+        session started from that project.</p>
+      <div class="callout">
+        <p>The token is shown masked in Drift so it does not leak on a screenshare, and you can
+          rotate it at any time from the same row. Disabling the connector stops the server
+          immediately.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="shot">
+    <div class="wrap">
+      <div class="frame">
+        <img src="../assets/ai-connections.jpg" loading="lazy"
+          alt="Drift's assistant Connections screen, where AI providers and the Claude Code MCP connector are turned on">
+      </div>
+      <p class="cap">The Connections screen: providers for Drift's own assistant, and the MCP connector for Claude Code.</p>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <div class="prose">
+      <h2 class="serif">What Claude Code can actually do</h2>
+      <p>The connector exposes eight tools. They are the same tools Drift's own built-in assistant
+        uses, which means they carry the same safety rules rather than a looser copy of them.</p>
+    </div>
+
+    <div class="table-scroll">
+      <table class="compare">
+        <thead>
+          <tr><th scope="col">Tool</th><th scope="col">What it does</th><th scope="col">Permission</th></tr>
+        </thead>
+        <tbody>
+          <tr><th scope="row">list_cards</th><td>Every card on the canvas: title, URL, zone, and what connects to what</td><td>Read only</td></tr>
+          <tr><th scope="row">read_page</th><td>A card's readable text plus its interactive elements, so the agent can refer to a specific button or field</td><td>Read only</td></tr>
+          <tr><th scope="row">screenshot_card</th><td>A JPEG of a card, for when layout or an image matters more than text</td><td>Read only</td></tr>
+          <tr><th scope="row">open_card</th><td>Opens a new card, optionally trailed from an existing one</td><td>Asks for unfamiliar sites</td></tr>
+          <tr><th scope="row">navigate_card</th><td>Sends a card to a new URL, or back, forward, or reload</td><td>Asks for unfamiliar sites</td></tr>
+          <tr><th scope="row">focus_card</th><td>Moves the canvas camera so you are looking at a card</td><td>None needed</td></tr>
+          <tr><th scope="row">click</th><td>Clicks an element on a page, as a real trusted browser event</td><td>Asks, per site</td></tr>
+          <tr><th scope="row">type_text</th><td>Types into a field, optionally pressing Enter</td><td>Asks, per site</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="prose">
+      <h2 class="serif">The safety model</h2>
+      <p>Handing an agent a browser that is signed into your real accounts is not a small thing,
+        so the guard rails are worth stating plainly.</p>
+      <ul>
+        <li><strong>Reading is free; acting asks.</strong> The first time the agent wants to click
+          or type on a site, Drift puts a dialog in front of you naming the site and the action.
+          Allow once, always allow that site, or deny.</li>
+        <li><strong>Standing grants stay visible.</strong> Every site you have said "always" to is
+          listed in Connections with a Revoke button. A permanent invisible licence would be a
+          trust bug, so there isn't one.</li>
+        <li><strong>Credential fields are refused outright.</strong> Password, payment-card, and
+          file-upload inputs are blocked even on a site you have allowed. The agent cannot type
+          your password, and it cannot be talked into it.</li>
+        <li><strong>Page text is quarantined.</strong> Everything read from a page is handed to
+          the model wrapped and labelled as untrusted data, so instructions hidden in a web page
+          are not mistaken for instructions from you.</li>
+        <li><strong>Escape is a brake.</strong> Pressing Escape on the canvas stops whatever is
+          running and hands the view back to you.</li>
+        <li><strong>Nothing is listening until you say so.</strong> The connector is off by
+          default, binds to loopback only, requires a bearer token, and refuses requests that
+          carry a web page's origin — so a site you are browsing cannot reach the port.</li>
+      </ul>
+
+      <h2 class="serif">It runs on your Mac, and it is free</h2>
+      <p>There is no Drift cloud. The MCP server is a few hundred lines running inside the browser
+        you already launched, listening on an address that only your own machine can reach. That
+        means no hosting bill, no account, no API key, no telemetry, and nothing to keep online.
+        Drift itself is free and <a href="https://github.com/BradB808/Drift-Browser-download-page">open
+        source under GPL-3.0</a>, so you can read exactly what the connector does before you
+        enable it.</p>
+      <p>It also means the connector is only reachable while Drift is running, on the machine it
+        is running on. That is a feature, not a limitation: a browser agent belongs next to the
+        browser.</p>
+
+      <h2 class="serif">How it compares</h2>
+      <p>Three common ways to give an AI agent a browser, and what each one actually gets you:</p>
+    </div>
+
+    <div class="table-scroll">
+      <table class="compare">
+        <thead>
+          <tr><th scope="col">&nbsp;</th><th scope="col">Drift MCP connector</th><th scope="col">Headless browser MCP</th><th scope="col">Browser extension</th></tr>
+        </thead>
+        <tbody>
+          <tr><th scope="row">Uses your signed-in session</th><td>Yes — it is your browser</td><td>No, starts logged out</td><td>Yes</td></tr>
+          <tr><th scope="row">You can watch it work</th><td>Yes, on the canvas</td><td>No, it is hidden</td><td>Yes</td></tr>
+          <tr><th scope="row">Works from the terminal</th><td>Yes, over MCP</td><td>Yes, over MCP</td><td>Usually chat-only</td></tr>
+          <tr><th scope="row">Per-site consent for clicks</th><td>Yes, with revocable grants</td><td>Varies; often none</td><td>Varies</td></tr>
+          <tr><th scope="row">Credential fields blocked</th><td>Yes, always</td><td>Rarely</td><td>Varies</td></tr>
+          <tr><th scope="row">Hosting or cost</th><td>None — loopback only</td><td>None to some</td><td>None</td></tr>
+          <tr><th scope="row">Whole-session context</th><td>The full canvas, with trails</td><td>One page at a time</td><td>One tab at a time</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="prose">
+      <h2 class="serif">Things worth trying first</h2>
+      <ul>
+        <li><em>"List what's on my canvas and tell me which of these tabs I can close."</em></li>
+        <li><em>"Read the three API docs pages I have open and write me a client for them."</em></li>
+        <li><em>"Open the failing CI run and tell me which test broke and why."</em></li>
+        <li><em>"Screenshot the staging page and compare it against the design card next to it."</em></li>
+        <li><em>"Fill in the issue form on this page with a repro from the error I just pasted"</em>
+          — Drift will ask you before it types, and it will show you the page while it does.</li>
+      </ul>
+
+      <h2 class="serif">Frequently asked</h2>
+      <h3>What is an MCP server?</h3>
+      <p>MCP, the Model Context Protocol, is an open standard for giving an AI assistant tools it
+        can call. An MCP server is simply a program that answers those calls. Drift's is built
+        into the browser and runs on your own Mac, so there is nothing to host and nothing to pay
+        for.</p>
+      <h3>Does it cost anything, or need a server?</h3>
+      <p>No. The connector runs inside Drift and listens only on <code>127.0.0.1</code>. No
+        hosting, no account, no subscription.</p>
+      <h3>How is this different from a headless browser MCP?</h3>
+      <p>A headless MCP launches its own empty browser and fetches a URL from scratch, logged out.
+        Drift's connector works on the pages already open in front of you, in your real signed-in
+        session.</p>
+      <h3>Can Claude Code click things without asking?</h3>
+      <p>No. Reading is free, but clicking and typing ask your permission the first time on each
+        site, and you can revoke a standing grant at any time. Password, payment-card, and
+        file-upload fields are refused outright.</p>
+      <h3>Does it work with MCP clients other than Claude Code?</h3>
+      <p>Yes. The connector speaks standard MCP over streamable HTTP, so any client that can point
+        at an HTTP MCP endpoint with a bearer token can drive Drift.</p>
+
+      <h2 class="serif">The honest fine print</h2>
+      <p>Drift is young software, built by one indie developer. It runs on macOS only for now, on
+        both Apple Silicon and Intel, with a Windows build coming. The MCP connector is new: it
+        does what this page describes, and it will grow.</p>
+      <p>If you want a browser that has been polished for a decade, this is not it. If you want
+        your coding agent to work on the actual web pages in front of you instead of a blank one
+        it opened for itself, that is what this is for. Start with the
+        <a href="../what-is-a-spatial-browser/">spatial browsing explainer</a> if the canvas idea
+        is new to you, or see what it looks like
+        <a href="../browser-without-tabs/">without tabs at all</a>.</p>
+    </div>
+  </div>
+</article>
+
+<section class="getit" id="download">
+  <div class="wrap">
+    <div class="cta-card">
+      <h2 class="serif">Get Drift and connect it</h2>
+      <p>Free, open source, and everything stays on your machine. Download the DMG, drag it to
+        Applications, open a few of the pages you would normally cram into tabs, then switch on
+        the connector and point Claude Code at it.</p>
+      <div class="cta"><a class="btn-main" href="../#download">Download Drift for macOS</a></div>
+      <p class="fineprint">DMGs for Apple Silicon and Intel Macs, signed and notarized by Apple.
+        Windows is coming soon. Questions first? Start at the <a href="../">Drift home page</a> or
+        read the <a href="https://github.com/BradB808/Drift-Browser-download-page">source on
+        GitHub</a>.</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap row">
+    <span>◍ Drift, a spatial web browser.</span>
+    <a href="../what-is-a-spatial-browser/">Spatial browsing</a>
+    <a href="../browser-without-tabs/">No tabs</a>
+    <a href="../arc-browser-alternative/">Arc alternative</a>
+    <a href="../">Home</a>
+    <a class="right" href="https://github.com/BradB808/Drift-Browser-download-page">Source on GitHub →</a>
+  </div>
+</footer>
+
+</body>
+</html>

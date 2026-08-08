@@ -1004,7 +1004,7 @@ app.whenReady().then(async () => {
   try {
     const { setupAI } = require('./ai')
     ai = setupAI({
-      app, ipcMain, safeStorage, shell, WebContentsView,
+      app, ipcMain, safeStorage, shell, dialog, WebContentsView,
       getWindow: () => win,
       views, sendUI, fromCanvas,
       headless: SELFTEST || PROMO,

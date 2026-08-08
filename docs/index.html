@@ -93,6 +93,10 @@
   nav .links { margin-left: auto; display: flex; gap: 26px; align-items: center; }
   nav .links a { color: var(--ink); text-decoration: none; font-size: 14.5px; font-weight: 500; }
   nav .links a:hover { color: var(--orange); }
+  /* A fourth link overflows the single-row nav on a phone, so it only appears
+     once there is room for it. */
+  nav .links a.navmcp { display: none; }
+  @media (min-width: 640px) { nav .links a.navmcp { display: inline; } }
   /* Liquid glass CTA, matching Drift's in-app toolbar */
   .pill {
     position: relative;
@@ -273,6 +277,116 @@
   .mini a { color: var(--ink); font-weight: 500; text-decoration: underline; text-underline-offset: 2px; }
   .mini a:hover { color: var(--orange); }
 
+  /* ---------- Claude Code / MCP ---------- */
+  /* Lockup tile on the left, the connect command on the right, value points across
+     the foot. Borrows the .vs gradient family so the launch reads as part of the page
+     rather than a bolted-on announcement. */
+  /* The connect command is a long unbreakable string; without this its min-content
+     width would blow the grid track out past the card and scroll the whole page. */
+  .mcpcard > * { min-width: 0; }
+  /* The hand-set line break only helps once the headline has room for it — on a
+     phone it would strand "agent" on a line of its own. The markup keeps a space
+     before the <br> so the words stay separated once it is hidden. */
+  .mcpcard h2 br { display: none; }
+  @media (min-width: 640px) { .mcpcard h2 br { display: inline; } }
+  @media (min-width: 900px) {
+    .mcpcard { grid-template-columns: 0.82fr 1.18fr; }
+    /* The command runs the full width of the card so it fits on one unbroken line. */
+    .mcpcard .term, .mcpcard .minis { grid-column: 1 / -1; }
+  }
+  .lockup {
+    background: linear-gradient(160deg, #ffe4cd 0%, #ffd9e4 58%, #ffe8cf 100%);
+    border-radius: 24px;
+    padding: clamp(28px, 4vw, 40px) 20px;
+    text-align: center;
+  }
+  .lockrow { display: flex; align-items: center; justify-content: center; gap: clamp(12px, 2.6vw, 20px); }
+  .lockchip {
+    flex: none;
+    width: 76px;
+    height: 76px;
+    border-radius: 20px;
+    background: #fff;
+    box-shadow: 0 6px 18px rgba(27, 27, 31, 0.14);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .lockchip img { width: 46px; height: 46px; }
+  .lockchip.driftchip img { width: 58px; height: 58px; border-radius: 13px; }
+  .lockplus { font-size: 38px; font-weight: 700; line-height: 1; color: rgba(27, 27, 31, 0.55); }
+  .lockname { margin-top: 20px; font-weight: 700; font-size: clamp(19px, 2.2vw, 24px); }
+  .mcptag {
+    display: inline-block;
+    background: linear-gradient(120deg, #ffe4cd 0%, #ffd9e4 60%, #ecdcff 100%);
+    border-radius: 999px;
+    padding: 7px 15px;
+    margin-bottom: 16px;
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  /* A terminal chip, not a form field: same dark glass as the buttons.
+     On a phone it is a grid — the command wraps under a hanging $ prompt with Copy
+     beneath it. From 640px up it is one nowrap line that scrolls inside the chip,
+     so the page itself never scrolls sideways. */
+  .term {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    align-items: start;
+    gap: 8px 10px;
+    padding: 12px 12px 12px 16px;
+    border-radius: 16px;
+    background: linear-gradient(135deg,
+      rgba(44, 37, 52, 0.96) 0%,
+      rgba(23, 19, 29, 0.94) 55%,
+      rgba(40, 31, 46, 0.96) 100%);
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    box-shadow: 0 14px 34px rgba(27, 27, 31, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  }
+  .term .prompt { padding: 2px 0; line-height: 1.55; color: #ffb469; font-family: ui-monospace, monospace; font-size: 13px; }
+  .term code {
+    min-width: 0;
+    display: block;
+    padding: 2px 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    line-height: 1.55;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px;
+    color: #f3efeb;
+  }
+  @media (min-width: 640px) {
+    .term { display: flex; align-items: center; gap: 10px; padding: 10px 10px 10px 16px; }
+    .term .prompt { flex: none; }
+    .term code { flex: 1 1 auto; white-space: nowrap; overflow-wrap: normal; overflow-x: auto; }
+    /* The tail fades instead of being chopped, so it reads as scrollable rather than
+       truncated. The fade lifts on focus, where it would otherwise dim the focus ring;
+       on wide screens the whole command fits and it lands on empty space anyway. */
+    .term code:not(:focus-visible) {
+      -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 26px), transparent);
+      mask-image: linear-gradient(90deg, #000 calc(100% - 26px), transparent);
+    }
+  }
+  .term code:focus-visible, .term .copy:focus-visible { outline: 2px solid #ffb469; outline-offset: 3px; }
+  .term .copy {
+    flex: none;
+    grid-column: 2;
+    margin-left: auto;
+    font-family: inherit;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--ink);
+    background: #fff;
+    border: 0;
+    border-radius: 999px;
+    padding: 9px 16px;
+    cursor: pointer;
+    transition: transform 0.12s ease, filter 0.15s ease;
+  }
+  .term .copy:hover { transform: translateY(-1px); filter: brightness(0.93); }
+
   /* ---------- comparisons ---------- */
   section.compare { padding: clamp(40px, 5vw, 64px) 0 0; }
   .compare h2 {
@@ -398,6 +512,7 @@
     <a class="brand" href="#"><img src="assets/icon.png" alt="Drift">DRIFT</a>
     <div class="links">
       <a href="#features">Features</a>
+      <a class="navmcp" href="#mcp">Claude Code</a>
       <a href="https://github.com/BradB808/Drift-Browser-download-page">GitHub</a>
       <a class="pill" href="#download">Get Drift</a>
     </div>
@@ -497,6 +612,42 @@
   </div>
 </section>
 
+<section class="block" id="mcp">
+  <div class="wrap">
+    <div class="card mcpcard">
+      <div class="lockup">
+        <div class="lockrow">
+          <span class="lockchip driftchip"><img src="assets/icon.png" alt=""></span>
+          <span class="lockplus serif" aria-hidden="true">+</span>
+          <span class="lockchip"><img src="assets/claude-mark.svg" alt="" width="46" height="46"></span>
+        </div>
+        <p class="lockname serif">Drift + Claude Code</p>
+      </div>
+      <div>
+        <p class="mcptag">MCP — now available in Drift</p>
+        <h2 class="serif">Your coding agent <br>can drive the canvas</h2>
+        <p class="lead">Switch on Drift's connector and Claude Code — or any MCP client — can open
+          cards, read the pages already in front of you, and act on them, without ever leaving
+          the terminal.</p>
+        <p class="body">Runs entirely on your Mac. Nothing is hosted and nothing leaves the
+          machine: the connector listens on 127.0.0.1 alone, and it stays switched off until you
+          turn it on in Assistant → Connections.
+          <a href="claude-code-mcp/">Read the full guide</a>.</p>
+      </div>
+      <div class="term">
+        <span class="prompt" aria-hidden="true">$</span>
+        <code id="mcpCmd" tabindex="0">claude mcp add --transport http drift http://127.0.0.1:8787/mcp --header "Authorization: Bearer &lt;token&gt;"</code>
+        <button class="copy" id="mcpCopy" type="button" aria-live="polite">Copy</button>
+      </div>
+      <div class="minis">
+        <div class="mini"><h4>Sees your whole canvas</h4><p>It can list every card, focus one, and open new pages right where you are already working.</p></div>
+        <div class="mini"><h4>Reads and acts on real pages</h4><p>The live, logged-in page as it sits on your screen, not a fresh anonymous fetch of the URL.</p></div>
+        <div class="mini"><h4>Asks before it clicks</h4><p>Clicking and typing need your yes, site by site, and password fields are blocked outright.</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+
 <section class="compare" id="compare">
   <div class="wrap">
     <h2 class="serif">How Drift compares</h2>
@@ -560,6 +711,7 @@
         <div class="mini"><h4>What is a spatial browser?</h4><p>A browser that lays your pages out as cards on a zoomable canvas instead of a row of tabs, so your session looks like a map. <a href="what-is-a-spatial-browser/">Read the full explainer</a>.</p></div>
         <div class="mini"><h4>What does Drift run on?</h4><p>macOS, on both Apple Silicon and Intel Macs. A Windows build is coming soon.</p></div>
         <div class="mini"><h4>Does Drift support Chrome extensions?</h4><p>Yes. Install ad blockers and other extensions straight from the Chrome Web Store; their icons live in the Drift toolbar.</p></div>
+        <div class="mini"><h4>Can I use Drift with Claude Code?</h4><p>Yes. Drift has a built-in MCP connector, so Claude Code or any MCP client can drive your canvas from the terminal. It runs only on your Mac and is off until you switch it on. <a href="#mcp">See how it works</a>.</p></div>
         <div class="mini"><h4>Does Drift track my browsing?</h4><p>No. There are no accounts, no sync servers, and no browsing log. Your canvas and bookmarks stay on your machine.</p></div>
         <div class="mini"><h4>What engine does Drift use?</h4><p>Chromium, via Electron. Every card is a real sandboxed browser page, so logins, video, and web apps all work like you expect.</p></div>
       </div>
@@ -575,6 +727,7 @@
     { "@type": "Question", "name": "What is a spatial browser?", "acceptedAnswer": { "@type": "Answer", "text": "A browser that lays your pages out as cards on a zoomable canvas instead of a row of tabs, so your session looks like a map." } },
     { "@type": "Question", "name": "What does Drift run on?", "acceptedAnswer": { "@type": "Answer", "text": "macOS, on both Apple Silicon and Intel Macs. A Windows build is coming soon." } },
     { "@type": "Question", "name": "Does Drift support Chrome extensions?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Install ad blockers and other extensions straight from the Chrome Web Store; their icons live in the Drift toolbar." } },
+    { "@type": "Question", "name": "Can I use Drift with Claude Code?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Drift has a built-in MCP connector, so Claude Code or any MCP client can drive your canvas from the terminal. It runs only on your Mac and is off until you switch it on." } },
     { "@type": "Question", "name": "Does Drift track my browsing?", "acceptedAnswer": { "@type": "Answer", "text": "No. There are no accounts, no sync servers, and no browsing log. Your canvas and bookmarks stay on your machine." } },
     { "@type": "Question", "name": "What engine does Drift use?", "acceptedAnswer": { "@type": "Answer", "text": "Chromium, via Electron. Every card is a real sandboxed browser page, so logins, video, and web apps all work like you expect." } }
   ]
@@ -599,6 +752,11 @@
         <h3>Looking for an Arc alternative?</h3>
         <div class="sub2">How Drift compares for people who loved Arc's ideas.</div>
         <a class="get" href="arc-browser-alternative/">Compare</a>
+      </div>
+      <div class="dl">
+        <h3>Claude Code + Drift over MCP</h3>
+        <div class="sub2">Give your coding agent a real, signed-in browser instead of a blank one.</div>
+        <a class="get" href="claude-code-mcp/">Read the guide</a>
       </div>
     </div>
   </div>
@@ -628,6 +786,7 @@
     <a href="what-is-a-spatial-browser/">Spatial browsing</a>
     <a href="browser-without-tabs/">No tabs</a>
     <a href="arc-browser-alternative/">Arc alternative</a>
+    <a href="claude-code-mcp/">Claude Code MCP</a>
     <a class="right" href="https://github.com/BradB808/Drift-Browser-download-page">Source on GitHub →</a>
   </div>
 </footer>
@@ -645,6 +804,21 @@
   } else {
     mainBtn.textContent = "Get Drift";
   }
+
+  const cmdEl = document.getElementById("mcpCmd");
+  const copyBtn = document.getElementById("mcpCopy");
+  copyBtn.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(cmdEl.textContent.trim());
+      copyBtn.textContent = "Copied";
+    } catch {
+      // The clipboard API needs a secure context and a real gesture; when it is
+      // refused, select the command so the visitor can press ⌘C themselves.
+      getSelection().selectAllChildren(cmdEl);
+      copyBtn.textContent = "Press ⌘C";
+    }
+    setTimeout(() => { copyBtn.textContent = "Copy"; }, 1800);
+  });
 </script>
 </body>
 </html>

@@ -142,17 +142,24 @@
     return out
   }
 
-  async function copyCode(btn) {
-    const code = btn.parentElement.querySelector('code')
-    const txt = code ? code.textContent : ''
-    try { await navigator.clipboard.writeText(txt) } catch {
-      const ta = el('textarea')
-      ta.value = txt
+  // The dock is a sandboxed view; if the async clipboard is unavailable, fall
+  // back to a throwaway offscreen selection so the text is still reachable.
+  async function copyText(text) {
+    try { await navigator.clipboard.writeText(text); return true } catch {}
+    try {
+      const ta = el('textarea', { style: 'position:fixed;left:-9999px;top:0;opacity:0' })
+      ta.value = text
       document.body.appendChild(ta)
       ta.select()
-      try { document.execCommand('copy') } catch {}
+      const ok = document.execCommand('copy')
       ta.remove()
-    }
+      return ok
+    } catch { return false }
+  }
+
+  async function copyCode(btn) {
+    const code = btn.parentElement.querySelector('code')
+    await copyText(code ? code.textContent : '')
     const prev = btn.textContent
     btn.textContent = 'Copied'
     setTimeout(() => { btn.textContent = prev }, 1200)
@@ -682,9 +689,109 @@
       else if (spec.kind === 'oauth') conn.appendChild(renderOauthRow(id, spec, canSave))
       else if (spec.kind === 'custom') conn.appendChild(renderCustomRow(id, spec, canSave))
     }
+    conn.appendChild(renderMcpRow())
     const allowed = renderAllowedSites()
     if (allowed) conn.appendChild(allowed)
     conn.appendChild(el('div', { class: 'connfoot', text: 'Keys are encrypted with your macOS keychain and never leave this Mac.' }))
+  }
+
+  // The MCP connector's state lives in main (it outlives this dock, which is
+  // normally closed while an external client drives the canvas), so this row
+  // paints from a fetch instead of from cfg and repaints itself after a change.
+  function renderMcpRow() {
+    const row = el('div', { class: 'prow' })
+    let reveal = false   // the token stays masked until asked for — screenshares
+    let busy = false
+
+    const cmdFor = (s, full) => 'claude mcp add --transport http drift ' + s.url +
+      ' --header "Authorization: Bearer ' + (full ? s.token : '••••••••••••') + '"'
+
+    const paint = (s, err) => {
+      row.innerHTML = ''
+      row.appendChild(rowHead('mcp', 'Claude Code (MCP)', !!(s && s.running), s ? 'Running on port ' + s.port : ''))
+      row.appendChild(el('div', { class: 'pnote', text: 'Connect Claude Code — or any MCP client — to this Drift window; it runs only on this Mac, and nothing leaves it.' }))
+      // A connector left enabled but not listening (port clash at launch) must
+      // say why — the row would otherwise just look inert.
+      const problem = err || (s && s.enabled && !s.running ? (s.error || 'The connector is not running.') : '')
+      const errLine = el('div', { class: 'perr' + (problem ? '' : ' hidden'), text: problem })
+      if (!s) { row.appendChild(errLine); return }
+
+      const settle = (next, fallback) => {
+        busy = false
+        const bad = !next || next.ok === false
+        paint(next && next.url ? next : null, bad ? ((next && next.error) || fallback) : '')
+      }
+
+      const bar = el('div', { class: 'pbtnrow' })
+      if (s.enabled) {
+        bar.appendChild(el('button', {
+          class: 'pbtn danger',
+          onclick: async () => {
+            if (busy) return
+            busy = true
+            settle(await driftAI.mcpSet({ enabled: false }), 'Could not stop the connector.')
+          }
+        }, 'Disable'))
+        row.appendChild(bar)
+
+        const cmd = el('input', {
+          class: 'pinput pcmd', type: 'text', readonly: 'readonly',
+          spellcheck: 'false', 'aria-label': 'Command to connect Claude Code'
+        })
+        cmd.value = cmdFor(s, reveal)
+        cmd.addEventListener('focus', () => cmd.select())
+        row.appendChild(cmd)
+
+        const cmdBar = el('div', { class: 'pbtnrow' })
+        const copy = el('button', { class: 'pbtn', text: 'Copy' })
+        copy.addEventListener('click', async () => {
+          // Copy the real command — a masked one would be useless in a terminal.
+          const ok = await copyText(cmdFor(s, true))
+          copy.textContent = ok ? 'Copied' : 'Select and press ⌘C'
+          setTimeout(() => { copy.textContent = 'Copy' }, 1500)
+        })
+        cmdBar.appendChild(copy)
+
+        cmdBar.appendChild(el('button', {
+          class: 'pbtn small',
+          onclick: () => { reveal = !reveal; paint(s, err) }
+        }, reveal ? 'Hide token' : 'Show token'))
+
+        cmdBar.appendChild(el('button', {
+          class: 'pbtn small',
+          onclick: async () => {
+            if (busy) return
+            busy = true
+            const next = await driftAI.mcpRotate()
+            reveal = false // a fresh token starts masked again
+            settle(next, 'Could not rotate the token.')
+          }
+        }, 'Rotate token'))
+        row.appendChild(cmdBar)
+      } else {
+        const port = el('input', {
+          class: 'pinput', type: 'text', spellcheck: 'false', autocomplete: 'off',
+          'aria-label': 'Port for the MCP connector'
+        })
+        port.value = String(s.port)
+        const on = el('button', { class: 'pbtn primary', text: 'Enable' })
+        on.addEventListener('click', async () => {
+          if (busy) return
+          busy = true
+          settle(await driftAI.mcpSet({ enabled: true, port: Number(port.value.trim()) }), 'Could not start the connector.')
+        })
+        bar.appendChild(port)
+        bar.appendChild(on)
+        row.appendChild(bar)
+      }
+      row.appendChild(errLine)
+    }
+
+    paint(null, '')
+    driftAI.mcpStatus()
+      .then((s) => paint(s || null, s ? '' : 'Could not read the connector state.'))
+      .catch(() => paint(null, 'Could not read the connector state.'))
+    return row
   }
 
   // Standing "Always" grants must be visible and revocable — a permanent,
