@@ -13,6 +13,10 @@ contextBridge.exposeInMainWorld('driftAI', {
   disconnect: (provider) => ipcRenderer.invoke('ai:disconnect', { provider }),
   models: (provider) => ipcRenderer.invoke('ai:models', { provider }),
   detectLocal: () => ipcRenderer.invoke('ai:detectLocal'),
+  // MCP connector — the loopback server an external client (Claude Code) drives.
+  mcpStatus: () => ipcRenderer.invoke('ai:mcpStatus'),
+  mcpSet: (patch) => ipcRenderer.invoke('ai:mcpSet', patch),
+  mcpRotate: () => ipcRenderer.invoke('ai:mcpRotate'),
   chats: () => ipcRenderer.invoke('ai:chats'),
   chat: (id) => ipcRenderer.invoke('ai:chat', { id }),
   deleteChat: (id) => ipcRenderer.invoke('ai:chatDelete', { id }),

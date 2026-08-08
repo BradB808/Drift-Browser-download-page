@@ -35,6 +35,7 @@
       "ext-shims.js",
       "ext-shim-preload.js",
       "ai/**/*",
+      "mcp/**/*",
       "chat/**/*",
       "renderer/**/*",
       "node_modules/**/*"

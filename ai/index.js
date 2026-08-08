@@ -12,6 +12,8 @@
 // renderer only; fromChat = the chat dock only.
 
 const path = require('path')
+const http = require('http')
+const crypto = require('crypto')
 const { createAiStore } = require('./store')
 const { createProviders } = require('./providers')
 const { connectOpenRouter, connectChatGPT, refreshChatGPT } = require('./oauth')
@@ -21,10 +23,11 @@ const { createAgent } = require('./agent')
 const DOCK_W = 400
 const TOOLBAR = 60
 const PIN_MS = 120000 // how long an AI read pins a card's webContents against pruning
+const MCP_PORT = 8787 // default loopback port for the MCP connector
 
 function setupAI(deps) {
   const {
-    app, ipcMain, safeStorage, shell, WebContentsView,
+    app, ipcMain, safeStorage, shell, dialog, WebContentsView,
     getWindow, views, sendUI, fromCanvas, headless, selftest
   } = deps
 
@@ -433,6 +436,186 @@ function setupAI(deps) {
     try { return await providers.detectLocal({}) } catch { return { ollama: { up: false }, lmstudio: { up: false } } }
   })
 
+  // ---------- MCP connector (Claude Code drives the canvas) ----------
+  //
+  // A loopback-only Streamable-HTTP server that hands the SAME tool surface the
+  // in-app assistant uses to an external MCP client. Off until the user turns it
+  // on, bound to 127.0.0.1, bearer-authenticated. The whole point is that the
+  // chat dock does NOT have to be open — so consent can't ride the in-transcript
+  // prompt and uses a native modal instead (see mcpRequestPermission).
+
+  function mcpConfig() {
+    const m = (store.getMeta() || {}).mcp || {}
+    const port = Number(m.port)
+    return {
+      enabled: !!m.enabled,
+      port: Number.isInteger(port) && port >= 1024 && port <= 65535 ? port : MCP_PORT,
+      token: typeof m.token === 'string' ? m.token : ''
+    }
+  }
+
+  function saveMcpConfig(patch) {
+    const next = Object.assign(mcpConfig(), patch)
+    store.setMeta({ mcp: next })
+    return next
+  }
+
+  const newMcpToken = () => crypto.randomBytes(24).toString('hex')
+
+  // The server module is loaded lazily and defensively: a broken or missing
+  // mcp/server.js must never take the assistant down with it.
+  let mcp = null
+  function mcpServer() {
+    if (mcp) return mcp
+    try {
+      const { createMcpServer } = require('../mcp/server')
+      mcp = createMcpServer({
+        tools,
+        requestPermission: mcpRequestPermission,
+        version: app.getVersion(),
+        log: msg => console.log('[drift] mcp: ' + msg)
+      })
+    } catch (err) {
+      console.log('[drift] mcp unavailable: ' + ((err && err.message) || err))
+      mcp = null
+    }
+    return mcp
+  }
+
+  // One dialog at a time: two concurrent tool calls would otherwise stack modal
+  // sheets on the same window and the user could not tell which is which.
+  const MCP_ASK_MS = 120000
+  let mcpDialogChain = Promise.resolve()
+  const mcpAsking = new Map()
+
+  function mcpRequestPermission({ origin, action }) {
+    // A headless run has nobody to answer a modal — refusing is the only safe
+    // answer, and it keeps `npm run selftest` from hanging on a native sheet.
+    if (headless || selftest) return Promise.resolve('no')
+    // A client that gave up on its own timeout and retried rides the sheet
+    // already on screen instead of queueing a second one nobody can see either.
+    const key = action + ' ' + origin
+    const riding = mcpAsking.get(key)
+    if (riding) return riding
+    const ask = async () => {
+      const win = getWindow()
+      if (!win || win.isDestroyed()) return 'no'
+      const { response } = await dialog.showMessageBox(win, {
+        type: 'question',
+        title: 'Drift',
+        message: 'Claude Code wants to ' + action + ' on ' + origin,
+        detail: 'This request came in through the Drift MCP connector, not from the chat dock. ' +
+          '“Always allow this site” can be revoked any time in Assistant → Connections.',
+        buttons: ['Allow once', 'Always allow this site', 'Deny'],
+        defaultId: 0,
+        cancelId: 2,
+        noLink: true
+      })
+      return response === 0 ? 'once' : response === 1 ? 'always' : 'no'
+    }
+    // `.then(ask, ask)` keeps the queue moving even if the previous link blew up.
+    const answered = mcpDialogChain.then(ask, ask)
+    mcpDialogChain = answered.catch(() => {})
+    // Hold the key until a human actually answers, not until the race below
+    // settles — otherwise a retry would queue a second sheet behind the first.
+    answered.then(() => mcpAsking.delete(key), () => mcpAsking.delete(key))
+    // The sheet is window-modal on a window that is backgrounded by definition
+    // here (the user is in their terminal), and the caller is an HTTP request
+    // that gives up long before a human notices it. Bound the wait so a sheet
+    // nobody sees can't stall every later request; 'timeout' rather than 'no'
+    // so the tool says nobody answered instead of blaming the user.
+    const out = Promise.race([
+      answered.catch(() => 'no'),
+      new Promise(r => setTimeout(() => r('timeout'), MCP_ASK_MS))
+    ])
+    mcpAsking.set(key, out)
+    return out
+  }
+
+  let mcpError = '' // why the last start attempt failed
+
+  function mcpState() {
+    const c = mcpConfig()
+    const running = !!(mcp && mcp.isRunning())
+    const port = (running && mcp.port()) || c.port
+    const s = {
+      enabled: c.enabled,
+      running,
+      port,
+      token: c.token,
+      url: 'http://127.0.0.1:' + port + '/mcp'
+    }
+    // Enabled but not listening (a port clash at launch, say) is a dead end for
+    // the user unless the row can tell them why.
+    if (c.enabled && !running && mcpError) s.error = mcpError
+    return s
+  }
+
+  async function mcpStart() {
+    if (headless || selftest) return { ok: false, error: 'not available in this run' }
+    const srv = mcpServer()
+    if (!srv) return { ok: false, error: 'the MCP connector is missing from this build' }
+    if (srv.isRunning()) return { ok: true }
+    const c = mcpConfig()
+    const token = c.token || saveMcpConfig({ token: newMcpToken() }).token
+    try {
+      await srv.start({ port: c.port, token })
+      mcpError = ''
+      return { ok: true }
+    } catch (err) {
+      mcpError = String((err && err.message) || err)
+      return { ok: false, error: mcpError }
+    }
+  }
+
+  async function mcpStop() {
+    if (!mcp || !mcp.isRunning()) return
+    try { await mcp.stop() } catch {}
+  }
+
+  // Restore the user's choice on launch (never in headless/selftest — those runs
+  // must not open a listening socket).
+  if (mcpConfig().enabled && !headless && !selftest) {
+    app.whenReady()
+      .then(() => mcpStart())
+      .then(r => { if (r && !r.ok) console.log('[drift] mcp did not start: ' + r.error) })
+      .catch(() => {})
+  }
+  app.on('before-quit', () => { mcpStop() })
+
+  ipcMain.handle('ai:mcpStatus', e => (fromChat(e) ? mcpState() : null))
+
+  ipcMain.handle('ai:mcpSet', async (e, d) => {
+    if (!fromChat(e) || !d || typeof d !== 'object') return { ok: false, error: 'bad request' }
+    if (d.port !== undefined) {
+      const port = Number(d.port)
+      if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+        return Object.assign(mcpState(), { ok: false, error: 'pick a port between 1024 and 65535' })
+      }
+      saveMcpConfig({ port })
+    }
+    const enabled = d.enabled === undefined ? mcpConfig().enabled : !!d.enabled
+    saveMcpConfig({ enabled })
+    // Always stop first: a port change while running has to rebind.
+    await mcpStop()
+    if (!enabled) return Object.assign(mcpState(), { ok: true })
+    const r = await mcpStart()
+    // A port that will not bind must not leave the toggle claiming it is on.
+    if (!r.ok) saveMcpConfig({ enabled: false })
+    return Object.assign(mcpState(), r)
+  })
+
+  ipcMain.handle('ai:mcpRotate', async e => {
+    if (!fromChat(e)) return { ok: false, error: 'bad request' }
+    const wasRunning = !!(mcp && mcp.isRunning())
+    saveMcpConfig({ token: newMcpToken() })
+    if (!wasRunning) return Object.assign(mcpState(), { ok: true })
+    await mcpStop()
+    const r = await mcpStart()
+    if (!r.ok) saveMcpConfig({ enabled: false })
+    return Object.assign(mcpState(), r)
+  })
+
   // ---------- chats ----------
 
   ipcMain.handle('ai:chats', e => (fromChat(e) ? store.listChats() : []))
@@ -504,6 +687,95 @@ function setupAI(deps) {
     } catch (err) {
       return { ok: false, error: String((err && err.message) || err) }
     }
+  })
+
+  // Minimal loopback JSON-RPC client for the MCP selftest. It speaks real HTTP
+  // on purpose — an in-process call would skip the auth and origin guards, which
+  // are exactly the parts worth proving.
+  function mcpPost({ port, token, body, headers }) {
+    return new Promise((resolve, reject) => {
+      const payload = Buffer.from(JSON.stringify(body))
+      const req = http.request({
+        host: '127.0.0.1',
+        port,
+        path: '/mcp',
+        method: 'POST',
+        // A fresh socket per call: Node's global agent keeps connections alive,
+        // and a pooled socket to a throwaway port that has since been closed
+        // would resurface as a spurious ECONNRESET.
+        agent: false,
+        headers: Object.assign({
+          'content-type': 'application/json',
+          'content-length': payload.length,
+          accept: 'application/json',
+          authorization: 'Bearer ' + token
+        }, headers || {})
+      }, res => {
+        let raw = ''
+        res.setEncoding('utf8')
+        res.on('data', c => { raw += c })
+        res.on('end', () => {
+          let json = null
+          try { json = JSON.parse(raw) } catch {}
+          resolve({ status: res.statusCode, json })
+        })
+      })
+      req.on('error', reject)
+      req.setTimeout(10000, () => req.destroy(new Error('mcp request timed out')))
+      req.end(payload)
+    })
+  }
+
+  ipcMain.handle('mcp:selftest', async e => {
+    if (!fromCanvas(e) || !selftest) return { ok: false, error: 'not in selftest' }
+    const out = { ok: false, tools: 0, called: false, authRejected: false, originRejected: false }
+    let srv = null
+    try {
+      const { createMcpServer } = require('../mcp/server')
+      const token = newMcpToken()
+      srv = createMcpServer({
+        tools,
+        // A throwaway instance on its own port: the user's config is untouched
+        // and no modal can appear (headless already refuses, this is belt).
+        requestPermission: () => Promise.resolve('no'),
+        version: app.getVersion(),
+        log: () => {}
+      })
+      const { port } = await srv.start({ port: 0, token })
+      const call = (body, headers) => mcpPost({ port, token, body, headers })
+
+      const init = await call({
+        jsonrpc: '2.0', id: 1, method: 'initialize',
+        params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'drift-selftest', version: '1' } }
+      })
+      if (init.status !== 200 || !init.json || !init.json.result) throw new Error('initialize returned ' + init.status)
+
+      const list = await call({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} })
+      const listed = (list.json && list.json.result && list.json.result.tools) || []
+      out.tools = Array.isArray(listed) ? listed.length : 0
+      if (!out.tools) throw new Error('tools/list returned no tools')
+
+      const ran = await call({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'list_cards', arguments: {} } })
+      const result = ran.json && ran.json.result
+      out.called = !!(result && Array.isArray(result.content) && result.content.length && !result.isError)
+
+      // Same length as the real token so the timing-safe compare is exercised
+      // rather than short-circuited on a length mismatch.
+      const wrong = token.slice(0, -1) + (token.endsWith('0') ? '1' : '0')
+      const bad = await mcpPost({ port, token: wrong, body: { jsonrpc: '2.0', id: 4, method: 'ping', params: {} } })
+      out.authRejected = bad.status === 401
+
+      const cross = await call({ jsonrpc: '2.0', id: 5, method: 'ping', params: {} }, { origin: 'https://evil.example' })
+      out.originRejected = cross.status === 403
+
+      out.ok = out.tools > 0 && out.called && out.authRejected && out.originRejected
+      if (!out.ok && !out.error) out.error = 'one of the MCP checks did not pass'
+    } catch (err) {
+      out.error = String((err && err.message) || err)
+    } finally {
+      if (srv) { try { await srv.stop() } catch {} }
+    }
+    return out
   })
 
   return { ensureOnTop, toggleDock: () => (chatOpen ? closeDock() : openDock()), isOpen: () => chatOpen }

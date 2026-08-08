@@ -4040,6 +4040,18 @@ async function runSelftest() {
       if (!ai.toolRan) report.errors.push('ai agent did not run a tool')
       if (!ai.text || !ai.text.trim()) report.errors.push('ai agent produced no text')
     }
+
+    // ---- MCP connector: a real loopback round-trip on a throwaway port ----
+    // Proves initialize/tools/list/tools-call plus the bearer and Origin guards.
+    // Its own try/catch: a missing channel is a recorded failure, not a run-ender.
+    let mcp
+    try {
+      mcp = drift.mcpSelftest ? await drift.mcpSelftest() : { ok: false, error: 'mcp:selftest channel missing' }
+    } catch (err) {
+      mcp = { ok: false, error: String(err && err.message || err) }
+    }
+    report.mcp = mcp
+    if (!mcp || !mcp.ok) report.errors.push('mcp selftest failed: ' + ((mcp && mcp.error) || 'no result'))
   } catch (err) {
     report.errors.push(String(err && err.stack || err))
   }

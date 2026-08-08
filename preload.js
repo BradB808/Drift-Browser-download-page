@@ -47,6 +47,7 @@ contextBridge.exposeInMainWorld('drift', {
   aiToggle: () => ipcRenderer.send('ai:toggle'),
   aiStop: () => ipcRenderer.send('ai:stopCanvas'),
   aiSelftest: () => ipcRenderer.invoke('ai:selftest'),
+  mcpSelftest: () => ipcRenderer.invoke('mcp:selftest'),
   aiCanvasResult: (payload) => ipcRenderer.send('ai:canvasResult', payload),
   onAICanvas: (fn) => ipcRenderer.on('ai:canvas', (_e, d) => fn(d)),
   onAIDock: (fn) => ipcRenderer.on('ai:dock', (_e, d) => fn(d))
