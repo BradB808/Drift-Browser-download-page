@@ -84,6 +84,21 @@ function wireView(id, view) {
     if (favicons && favicons.length) emit('favicon', { favicon: favicons[0] })
   })
   wc.on('did-navigate', (_e, url) => emit('url', { url, ...navState() }))
+  // Chromium drops the content zoom on every main-frame navigation (measured:
+  // set 1.4, navigate, read back 1). The layout loop cannot notice, because it
+  // only calls setZoomFactor when the value CHANGES and `m.zoom` still says the
+  // old one landed — so a navigated page renders at 1.0 while the canvas is
+  // scaled to V.s. That is the "page is tiny / zoomed out" bug, and it is why
+  // panning never cured it (V.s never changes, so neither does z) while a zoom
+  // did. Re-assert it on commit, where it sticks; costs one read per navigation,
+  // so the per-frame throttle stays untouched.
+  wc.on('did-navigate', () => {
+    const m = views.get(id)
+    if (!m || m.zoom === null) return // nothing applied yet; the next layout will
+    const w = m.view && m.view.webContents
+    if (!w || w.isDestroyed()) return
+    if (Math.abs(w.getZoomFactor() - m.zoom) > 0.001) w.setZoomFactor(m.zoom)
+  })
   wc.on('did-navigate-in-page', (_e, url, isMainFrame) => {
     if (isMainFrame) emit('url', { url, ...navState() })
   })
