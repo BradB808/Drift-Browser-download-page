@@ -1,2 +1,12 @@
 [build]
   publish = "docs"
+  # docs/ is hand-written static HTML — there is nothing to build. The explicit
+  # no-op matters: package.json at the repo root is the Electron app, and left to
+  # its own devices Netlify's Node detection would npm-install the castlabs
+  # Electron dist (hundreds of MB) on every deploy of a site that needs none of it.
+  command = "echo 'static site — nothing to build'"
+
+# Only rebuild when something the site actually serves has changed. App-only
+# commits (main.js, ai/, mcp/ …) land on main constantly and must not each cost
+# a deploy. Exit 0 = skip the build, so this inverts the usual sense.
+  ignore = "git diff --quiet $CACHED_COMMIT_REF $COMMIT_REF -- docs netlify.toml"
