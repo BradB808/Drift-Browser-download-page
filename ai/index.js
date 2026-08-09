@@ -445,7 +445,10 @@ function setupAI(deps) {
   // prompt and uses a native modal instead (see mcpRequestPermission).
 
   function mcpConfig() {
-    const m = (store.getMeta() || {}).mcp || {}
+    // getSettings, NOT getMeta: this runs at launch to restore the user's
+    // choice, and getMeta probes the keychain — which would make the OS ask
+    // every user for their keychain password on every start, assistant or no.
+    const m = (store.getSettings() || {}).mcp || {}
     const port = Number(m.port)
     return {
       enabled: !!m.enabled,

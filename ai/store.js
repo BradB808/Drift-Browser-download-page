@@ -141,6 +141,15 @@ function createAiStore({ userDataDir, safeStorage, headless }) {
   // so saves always work there) and never persisted.
   const getMeta = () => Object.assign({}, meta, { encryptionAvailable: headless ? true : canEncrypt() })
 
+  // Same settings, WITHOUT the encryptionAvailable probe. On macOS
+  // isEncryptionAvailable() reaches into the keychain, and the first reach on a
+  // fresh profile makes the OS put up "Drift wants to use your confidential
+  // information" — alarming, and unforgivable when the user has stored no
+  // secret at all. Anything that only needs plain settings (the MCP connector's
+  // port/token, read at launch) must use this, so nothing touches the keychain
+  // until the user is actually saving or using a provider key.
+  const getSettings = () => Object.assign({}, meta)
+
   const setMeta = (patch) => {
     if (!patch || typeof patch !== 'object') return
     Object.assign(meta, patch)
@@ -178,7 +187,7 @@ function createAiStore({ userDataDir, safeStorage, headless }) {
     persistChats()
   }
 
-  return { getSecret, setSecret, getMeta, setMeta, listChats, getChat, saveChat, deleteChat, clearChats, flush }
+  return { getSecret, setSecret, getMeta, getSettings, setMeta, listChats, getChat, saveChat, deleteChat, clearChats, flush }
 }
 
 module.exports = { createAiStore }
